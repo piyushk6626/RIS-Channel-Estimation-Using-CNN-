@@ -144,3 +144,54 @@ def plot_pilot_length_vs_nmse(summary_rows: list[dict[str, float]], destination:
     plt.tight_layout()
     plt.savefig(destination, dpi=200)
     plt.close()
+
+
+def plot_pilot_length_vs_gain(summary_rows: list[dict[str, float]], destination: str | Path) -> None:
+    plt = _plt()
+    ordered_rows = sorted(summary_rows, key=lambda row: row["pilot_length"])
+    pilot_lengths = [row["pilot_length"] for row in ordered_rows]
+    cnn_gain = [row["cnn_gain_db"] for row in ordered_rows]
+
+    plt.figure(figsize=(7, 4))
+    plt.plot(pilot_lengths, cnn_gain, marker="o", color="tab:green")
+    plt.xlabel("Pilot length")
+    plt.ylabel("CNN gain over LS (dB)")
+    plt.title("Pilot Length vs CNN Gain")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(destination, dpi=200)
+    plt.close()
+
+
+def plot_all_pilots_snr_comparison(summary_rows: list[dict[str, object]], destination: str | Path) -> None:
+    plt = _plt()
+    ordered_rows = sorted(summary_rows, key=lambda row: row["pilot_length"])
+    if not ordered_rows:
+        return
+
+    snr_keys = sorted(ordered_rows[0]["cnn_per_snr_nmse_db_mean"], key=lambda value: float(value))
+    snr_values = [float(key) for key in snr_keys]
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), sharex=True)
+    for row in ordered_rows:
+        label = f"Pilots {row['pilot_length']}"
+        cnn_nmse = [float(row["cnn_per_snr_nmse_db_mean"][key]) for key in snr_keys]
+        cnn_gain = [float(row["cnn_gain_per_snr_db"][key]) for key in snr_keys]
+        axes[0].plot(snr_values, cnn_nmse, marker="o", label=label)
+        axes[1].plot(snr_values, cnn_gain, marker="o", label=label)
+
+    axes[0].set_xlabel("SNR (dB)")
+    axes[0].set_ylabel("CNN test NMSE (dB)")
+    axes[0].set_title("CNN Test NMSE vs SNR")
+    axes[0].grid(True, alpha=0.3)
+
+    axes[1].set_xlabel("SNR (dB)")
+    axes[1].set_ylabel("CNN gain over LS (dB)")
+    axes[1].set_title("CNN Gain vs SNR")
+    axes[1].grid(True, alpha=0.3)
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", ncol=min(len(labels), 4), bbox_to_anchor=(0.5, 1.05))
+    fig.tight_layout()
+    fig.savefig(destination, dpi=200, bbox_inches="tight")
+    plt.close(fig)

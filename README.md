@@ -694,6 +694,8 @@ data/runs/
 └── cnn_baseline/
     └── 20260421-153000/
         ├── pilot_length_summary.csv
+        ├── pilot_length_snr_comparison.png
+        ├── pilot_length_vs_gain.png
         ├── pilot_length_vs_nmse.png
         ├── experiment_summary.md
         ├── pilots_8/
@@ -722,6 +724,12 @@ Per-pilot run outputs:
 - `normalization.json`: train-split standardization statistics
 - `predictions.npz`: saved test targets plus CNN and LS predictions
 - `plots/*.png`: figures ready to use in the report
+
+Multi-pilot run outputs:
+
+- `pilot_length_vs_nmse.png`: CNN and LS test NMSE versus pilot length
+- `pilot_length_vs_gain.png`: CNN gain over LS versus pilot length
+- `pilot_length_snr_comparison.png`: all-pilot comparison of CNN test NMSE and gain across SNR
 
 ## 11. Verification And Tests
 

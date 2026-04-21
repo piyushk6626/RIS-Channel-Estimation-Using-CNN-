@@ -20,10 +20,12 @@ from .data import ChannelEstimationDataset, PreparedPilotData, SplitData, load_p
 from .metrics import EvaluationResult, channels_first_to_last, evaluate_predictions
 from .model import CompactCnnEstimator
 from .plotting import (
+    plot_all_pilots_snr_comparison,
     plot_channel_examples,
     plot_error_histogram,
     plot_loss_curve,
     plot_nmse_curve,
+    plot_pilot_length_vs_gain,
     plot_pilot_length_vs_nmse,
     plot_snr_vs_nmse,
 )
@@ -49,19 +51,13 @@ def run_training_suite(config: TrainingConfig) -> dict[str, Any]:
     run_root.mkdir(parents=True, exist_ok=True)
 
     all_results = [train_single_pilot(config, pilot_length, run_root, device) for pilot_length in config.pilot_lengths]
-    summary_rows = [
-        {
-            "pilot_length": result.pilot_length,
-            "cnn_nmse_db_mean": float(result.cnn_test.summary["nmse_db_mean"]),
-            "ls_nmse_db_mean": float(result.ls_test.summary["nmse_db_mean"]),
-            "cnn_gain_db": float(result.ls_test.summary["nmse_db_mean"] - result.cnn_test.summary["nmse_db_mean"]),
-        }
-        for result in all_results
-    ]
+    summary_rows = [_build_summary_row(result) for result in all_results]
 
     if len(summary_rows) > 1:
         _write_summary_table(run_root / "pilot_length_summary.csv", summary_rows)
         plot_pilot_length_vs_nmse(summary_rows, run_root / "pilot_length_vs_nmse.png")
+        plot_pilot_length_vs_gain(summary_rows, run_root / "pilot_length_vs_gain.png")
+        plot_all_pilots_snr_comparison(summary_rows, run_root / "pilot_length_snr_comparison.png")
         _write_experiment_summary(run_root / "experiment_summary.md", summary_rows)
 
     return {
@@ -369,7 +365,7 @@ def _batch_nmse(
     prediction_denorm = prediction * channel_std + channel_mean
     target_denorm = target * channel_std + channel_mean
     error_power = (prediction_denorm - target_denorm).pow(2).sum(dim=1).sum(dim=(1, 2))
-    target_power = target_denorm.pow(2).sum(dim=1).sum(dim=(1, 2)).clamp_min(1e-12)
+    target_power = target_denorm.pow(2).sum(dim=1).sum(dim=(1, 2)).clamp_min(torch.finfo(target_denorm.dtype).tiny)
     return error_power / target_power
 
 
@@ -411,15 +407,28 @@ def _write_history(destination: Path, history: list[dict[str, float]]) -> None:
             writer.writerow(row)
 
 
-def _write_summary_table(destination: Path, summary_rows: list[dict[str, float]]) -> None:
+def _write_summary_table(destination: Path, summary_rows: list[dict[str, Any]]) -> None:
     with destination.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["pilot_length", "cnn_nmse_db_mean", "ls_nmse_db_mean", "cnn_gain_db"])
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "pilot_length",
+                "best_epoch",
+                "epochs_completed",
+                "cnn_val_nmse_db_mean",
+                "ls_val_nmse_db_mean",
+                "cnn_nmse_db_mean",
+                "ls_nmse_db_mean",
+                "cnn_gain_db",
+            ],
+            extrasaction="ignore",
+        )
         writer.writeheader()
         for row in summary_rows:
             writer.writerow(row)
 
 
-def _write_experiment_summary(destination: Path, summary_rows: list[dict[str, float]]) -> None:
+def _write_experiment_summary(destination: Path, summary_rows: list[dict[str, Any]]) -> None:
     best_row = min(summary_rows, key=lambda row: row["cnn_nmse_db_mean"])
     lines = [
         "# Experiment Summary",
@@ -430,3 +439,27 @@ def _write_experiment_summary(destination: Path, summary_rows: list[dict[str, fl
         f"- CNN improvement over LS: `{best_row['cnn_gain_db']:.3f} dB`",
     ]
     destination.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _build_summary_row(result: PilotRunResult) -> dict[str, Any]:
+    cnn_test_per_snr = {
+        key: float(value["nmse_db_mean"]) for key, value in result.cnn_test.summary["per_snr"].items()
+    }
+    ls_test_per_snr = {
+        key: float(value["nmse_db_mean"]) for key, value in result.ls_test.summary["per_snr"].items()
+    }
+    cnn_gain_per_snr = {key: ls_test_per_snr[key] - cnn_test_per_snr[key] for key in cnn_test_per_snr}
+
+    return {
+        "pilot_length": result.pilot_length,
+        "best_epoch": result.best_epoch,
+        "epochs_completed": len(result.history),
+        "cnn_val_nmse_db_mean": float(result.cnn_val.summary["nmse_db_mean"]),
+        "ls_val_nmse_db_mean": float(result.ls_val.summary["nmse_db_mean"]),
+        "cnn_nmse_db_mean": float(result.cnn_test.summary["nmse_db_mean"]),
+        "ls_nmse_db_mean": float(result.ls_test.summary["nmse_db_mean"]),
+        "cnn_gain_db": float(result.ls_test.summary["nmse_db_mean"] - result.cnn_test.summary["nmse_db_mean"]),
+        "cnn_per_snr_nmse_db_mean": cnn_test_per_snr,
+        "ls_per_snr_nmse_db_mean": ls_test_per_snr,
+        "cnn_gain_per_snr_db": cnn_gain_per_snr,
+    }
