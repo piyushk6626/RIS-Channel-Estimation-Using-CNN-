@@ -13,7 +13,36 @@ from ris_dataset.io import load_split
 def _compute_channel_stats(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     mean = values.mean(axis=(0, 1, 2), dtype=np.float64).astype(np.float32)
     std = values.std(axis=(0, 1, 2), dtype=np.float64).astype(np.float32)
-    return mean, np.maximum(std, np.array([1e-6, 1e-6], dtype=np.float32))
+    return mean, std
+
+
+def _sanitize_std(std: np.ndarray) -> np.ndarray:
+    safe_std = std.astype(np.float32, copy=True)
+    zero_mask = safe_std <= np.finfo(np.float32).tiny
+    safe_std[zero_mask] = 1.0
+    return safe_std
+
+
+def _validate_normalization_scale(name: str, raw_std: np.ndarray, safe_std: np.ndarray) -> None:
+    normalized_std = np.divide(
+        raw_std,
+        safe_std,
+        out=np.zeros_like(raw_std, dtype=np.float32),
+        where=safe_std > 0.0,
+    )
+    variable_mask = raw_std > np.finfo(np.float32).tiny
+    invalid_mask = variable_mask & ~np.isclose(normalized_std, 1.0, rtol=1e-2, atol=1e-3)
+    if not np.any(invalid_mask):
+        return
+
+    components = ", ".join(
+        (
+            f"component {index}: raw_std={raw_std[index]:.3e}, "
+            f"used_std={safe_std[index]:.3e}, normalized_std={normalized_std[index]:.3e}"
+        )
+        for index in np.flatnonzero(invalid_mask)
+    )
+    raise ValueError(f"{name} normalization would distort the training split scale ({components}).")
 
 
 def _standardize(values: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
@@ -29,8 +58,12 @@ class NormalizationStats:
 
     @classmethod
     def from_train_split(cls, observations: np.ndarray, channel: np.ndarray) -> "NormalizationStats":
-        observation_mean, observation_std = _compute_channel_stats(observations)
-        channel_mean, channel_std = _compute_channel_stats(channel)
+        observation_mean, observation_std_raw = _compute_channel_stats(observations)
+        channel_mean, channel_std_raw = _compute_channel_stats(channel)
+        observation_std = _sanitize_std(observation_std_raw)
+        channel_std = _sanitize_std(channel_std_raw)
+        _validate_normalization_scale("Observation", observation_std_raw, observation_std)
+        _validate_normalization_scale("Channel", channel_std_raw, channel_std)
         return cls(
             observation_mean=observation_mean,
             observation_std=observation_std,
