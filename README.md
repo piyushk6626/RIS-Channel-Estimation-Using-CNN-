@@ -1,166 +1,126 @@
-# RIS-Assisted mmWave Dataset Creation And CNN Training
+# RIS-Assisted mmWave Channel Estimation Using CNN
 
-This repository contains a **Python dataset generator** and a **PyTorch CNN training pipeline** for a **single-user, narrowband, RIS-assisted mmWave channel estimation** problem.
+This repository implements a complete, reproducible pipeline for a focused RIS-assisted mmWave channel estimation project:
 
-The goal of this code is to create a **clean, reproducible, physically motivated synthetic dataset** and then use it to train and evaluate:
+1. generate a synthetic narrowband single-user RIS dataset,
+2. train a compact CNN to estimate the cascaded channel,
+3. compare the CNN against a Least Squares (LS) baseline,
+4. study how performance changes when the pilot length is reduced.
 
-- Least Squares (LS)
-- compressed sensing style baselines such as OMP
-- CNN-based channel estimators
+The code is intentionally scoped to match a practical B.Tech/M.Tech assignment:
 
-The implementation follows the scope of the project brief:
+- one BS,
+- one RIS,
+- one single-antenna user,
+- narrowband channel,
+- pilot-based estimation,
+- reduced-pilot experiments.
 
-- one BS
-- one RIS
-- one user
-- narrowband mmWave channel
-- pilot-based channel estimation
-- reduced-pilot experiments
+The main research question supported by this codebase is:
 
-It also adds realism beyond a toy simulator by including:
+> Can a compact CNN recover the RIS-assisted cascaded channel better than LS when the number of pilots is limited?
 
-- 3D geometry
-- sparse geometric channels
-- LoS and NLoS path components
-- 28 GHz close-in path loss
-- RIS phase codebooks
-- phase quantization
-- reproducible random seeding
+## 1. What This Repository Actually Implements
 
-## 1. What This Repository Currently Does
+Implemented now:
 
-The current codebase implements two stages:
+- physically motivated synthetic dataset generation,
+- balanced SNR sampling,
+- deterministic RIS pilot/codebook generation,
+- RIS phase quantization,
+- PyTorch CNN training,
+- LS baseline evaluation,
+- plots, checkpoints, and experiment summaries,
+- tests for both data generation and training.
 
-1. **dataset creation**
-2. **CNN training and evaluation**
+Not implemented yet:
 
-The dataset generator creates synthetic pairs of:
+- OMP or other compressed sensing baselines,
+- direct BS-user path,
+- wideband/OFDM channels,
+- multi-user setups,
+- hybrid beamforming,
+- hardware impairment modeling.
 
-- **input**: noisy pilot observations seen at the BS after RIS reflection
-- **label**: the true cascaded BS-RIS-user channel
+That means the current repository is best described as:
 
-For each pilot length `Q`, the generator writes:
-
-- `train.npz`
-- `val.npz`
-- `test.npz`
-
-and also a dataset-level:
-
-- `manifest.json`
-
-The default setup produces datasets for:
-
-- pilot lengths `{8, 12, 16, 24, 32}`
-- SNR values `{0, 5, 10, 15, 20}` dB
-
-With the default split sizes in [configs/dataset_small.yaml](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/configs/dataset_small.yaml):
-
-- train = `8000`
-- val = `1000`
-- test = `1000`
-
-that means:
-
-- `10000` samples per pilot length
-- `50000` samples total across all five pilot-length folders
-
-The training pipeline then reads one pilot folder at a time, trains a compact CNN, compares it with the LS baseline, and saves:
-
-- model checkpoints
-- CSV and JSON summaries
-- CNN vs LS evaluation metrics
-- publication-style plots for the run
+> a clean RIS-assisted mmWave dataset generator plus a compact CNN-vs-LS estimation benchmark.
 
 ## 2. Repository Structure
 
-- [src/ris_dataset/config.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_dataset/config.py)
-  Loads YAML config files into structured dataclasses and validates inputs.
-- [src/ris_dataset/geometry.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_dataset/geometry.py)
-  Samples UE positions and computes distances and geometric angles.
-- [src/ris_dataset/channels.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_dataset/channels.py)
-  Builds BS-RIS and RIS-UE sparse geometric channels.
-- [src/ris_dataset/pilots.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_dataset/pilots.py)
-  Builds the RIS pilot phase codebook and applies phase quantization.
-- [src/ris_dataset/generator.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_dataset/generator.py)
-  Generates samples, splits, whole datasets, and the LS sanity-check estimator.
-- [src/ris_dataset/io.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_dataset/io.py)
-  Converts complex tensors into real/imag channel format and saves `.npz` archives.
-- [scripts/generate_dataset.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/scripts/generate_dataset.py)
-  Command-line entry point.
-- [src/ris_training/config.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/config.py)
-  Loads the CNN training configuration and applies CLI overrides.
-- [src/ris_training/data.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/data.py)
-  Loads `.npz` splits, standardizes them, and prepares PyTorch datasets.
-- [src/ris_training/model.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/model.py)
-  Defines the compact CNN used for channel estimation.
-- [src/ris_training/metrics.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/metrics.py)
-  Computes MSE, NMSE, and grouped SNR summaries for CNN and LS.
-- [src/ris_training/plotting.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/plotting.py)
-  Creates saved figures for losses, NMSE, SNR sweeps, histograms, and channel heatmaps.
-- [src/ris_training/trainer.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/trainer.py)
-  Runs end-to-end training, checkpointing, evaluation, and report generation.
-- [scripts/train_cnn.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/scripts/train_cnn.py)
-  Training CLI for one pilot length or all configured pilot lengths.
-- [configs/training_cnn.yaml](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/configs/training_cnn.yaml)
-  Default training preset tuned for Apple Silicon-friendly experimentation.
+- [README.md](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/README.md)
+  Project overview, math, training logic, and exact hyperparameters.
+- [Brif.md](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/Brif.md)
+  Assignment brief and project framing notes.
 - [configs/dataset_small.yaml](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/configs/dataset_small.yaml)
-  Default experiment preset: BS `2x4`, RIS `4x4`.
+  Default small dataset preset.
 - [configs/dataset_large.yaml](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/configs/dataset_large.yaml)
-  Larger preset: BS `4x4`, RIS `4x8`.
+  Larger array preset.
+- [configs/training_cnn.yaml](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/configs/training_cnn.yaml)
+  Default CNN training preset.
+- [scripts/generate_dataset.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/scripts/generate_dataset.py)
+  CLI entry point for dataset generation.
+- [scripts/train_cnn.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/scripts/train_cnn.py)
+  CLI entry point for CNN training and evaluation.
+- [src/ris_dataset/config.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_dataset/config.py)
+  Dataset configuration dataclasses and validation.
+- [src/ris_dataset/geometry.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_dataset/geometry.py)
+  User placement and geometry utilities.
+- [src/ris_dataset/channels.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_dataset/channels.py)
+  Sparse geometric BS-RIS and RIS-UE channel generation.
+- [src/ris_dataset/pilots.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_dataset/pilots.py)
+  RIS phase codebook generation and phase quantization.
+- [src/ris_dataset/generator.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_dataset/generator.py)
+  Split generation, sample generation, and LS estimator.
+- [src/ris_dataset/io.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_dataset/io.py)
+  Complex-to-real serialization helpers.
+- [src/ris_training/config.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/config.py)
+  Training config parsing and CLI overrides.
+- [src/ris_training/data.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/data.py)
+  `.npz` loading, normalization, and PyTorch datasets.
+- [src/ris_training/model.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/model.py)
+  CNN model definition.
+- [src/ris_training/trainer.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/trainer.py)
+  Training loop, checkpointing, prediction, and evaluation.
+- [src/ris_training/metrics.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/metrics.py)
+  MSE/NMSE computation and SNR-wise summaries.
+- [src/ris_training/plotting.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/plotting.py)
+  Publication-style experiment plots.
 - [tests/test_generator.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/tests/test_generator.py)
-  Smoke, reproducibility, physics, and LS sanity checks.
+  Dataset generation and LS sanity tests.
 - [tests/test_training.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/tests/test_training.py)
-  Loader, model-shape, metrics, and training smoke tests.
+  Loader, shape, metric, and training smoke tests.
 
-## 3. System Model
+## 3. Problem Setup
 
-We model the communication path:
+The modeled communication path is:
 
 `BS -> RIS -> User`
 
-The direct BS-user path is intentionally disabled in this first version to keep the estimation target focused and consistent with the project scope.
+The direct BS-user path is disabled on purpose in this version so that the learning target stays clean:
 
-### 3.1 Nodes
+- the model only needs to estimate the RIS-assisted cascaded channel,
+- the pilot observations directly reflect the BS-RIS-user cascade,
+- the reduced-pilot study is easier to interpret.
 
-- BS with `M` antennas
-- RIS with `N` passive reflecting elements
-- single-antenna user
+System nodes:
+
+- BS with `M` antennas,
+- RIS with `N` passive reflecting elements,
+- one single-antenna user.
 
 For the default small preset:
 
-- `M = 8`
-- `N = 16`
+- `M = 8`,
+- `N = 16`.
 
-### 3.2 Geometry
+## 4. Exact Dataset and Channel Model
 
-The default geometry is:
+### 4.1 Array Model
 
-- BS at `(0, 0, 8)` meters
-- RIS at `(20, 0, 5)` meters
-- UE height fixed at `1.5` meters
-- UE horizontal position sampled in a sector around the RIS
+Both the BS and RIS are modeled as uniform planar arrays (UPAs).
 
-Default UE sampling sector:
-
-- radius from `5 m` to `25 m`
-- azimuth from `-60 deg` to `+60 deg`
-
-This is a practical compromise:
-
-- fixed BS and RIS give a stable reference geometry
-- random UE placement gives channel diversity
-- path lengths vary enough to create realistic power variation
-
-## 4. Mathematical Model
-
-This section explains the actual equations behind the generator.
-
-### 4.1 Uniform Planar Array Response
-
-Both the BS and RIS are modeled as **uniform planar arrays (UPAs)**.
-
-For an array with `N_r` rows and `N_c` columns, the steering vector used in the code is:
+For an array with `N_r` rows and `N_c` columns, the steering vector used by the generator is:
 
 ```math
 \mathbf{a}(\phi,\theta)
@@ -175,38 +135,35 @@ r \sin(\phi)\cos(\theta)
 \right)
 ```
 
-In index form, for row index `r` and column index `c`:
-
-```math
-[\mathbf{a}(\phi,\theta)]_{r,c}
-=
-\frac{1}{\sqrt{N_r N_c}}
-\exp\left(
-j 2 \pi \frac{d}{\lambda}
-\left(
-r \sin(\phi)\cos(\theta)
-+ c \sin(\theta)
-\right)
-\right)
-```
-
 where:
 
-- `phi` is azimuth
-- `theta` is elevation
-- `d/lambda` is the element spacing in wavelengths
+- `phi` is azimuth,
+- `theta` is elevation,
+- `d / lambda` is element spacing in wavelengths.
 
-In this repository, the default is:
+Default value:
 
-- `d/lambda = 0.5`
+- `element_spacing_lambda = 0.5`
 
-which means **half-wavelength spacing**.
+So the arrays use half-wavelength spacing.
 
-Implementation:
+### 4.2 Geometry
 
-- [src/ris_dataset/channels.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_dataset/channels.py)
+Default geometry from [configs/dataset_small.yaml](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/configs/dataset_small.yaml):
 
-### 4.2 Sparse mmWave BS-RIS Channel
+- BS position: `(0.0, 0.0, 8.0)` m
+- RIS position: `(20.0, 0.0, 5.0)` m
+- UE height: `1.5` m
+- UE radius range: `5.0` m to `25.0` m
+- UE azimuth range: `-60.0 deg` to `60.0 deg`
+
+This means:
+
+- BS and RIS stay fixed,
+- the user position changes from sample to sample,
+- geometry-driven LoS path lengths and angles also change from sample to sample.
+
+### 4.3 Sparse BS-RIS Channel
 
 The BS-RIS link is generated as a sparse geometric MIMO channel:
 
@@ -219,24 +176,13 @@ The BS-RIS link is generated as a sparse geometric MIMO channel:
 \mathbf{a}_{RIS}(\phi^{tx}_{\ell}, \theta^{tx}_{\ell})^H
 ```
 
-where:
+Default BS-RIS path counts:
 
-- `G` has shape `M x N`
-- `L_BR` is the number of BS-RIS paths
-- `alpha_l` is the complex gain of path `l`
+- LoS paths: `1`
+- NLoS paths: `2`
+- total: `3`
 
-Default BS-RIS path count:
-
-- `1` LoS path
-- `2` NLoS paths
-
-So in the default config:
-
-```math
-L_{BR} = 3
-```
-
-### 4.3 Sparse mmWave RIS-UE Channel
+### 4.4 Sparse RIS-UE Channel
 
 The RIS-UE link is generated as:
 
@@ -248,58 +194,48 @@ The RIS-UE link is generated as:
 \mathbf{a}_{RIS}(\phi_p,\theta_p)
 ```
 
-where:
+Default RIS-UE path counts:
 
-- `h_RU` has shape `N x 1` in math
-- in code it is stored as a length-`N` complex vector
+- LoS paths: `1`
+- NLoS paths: `1`
+- total: `2`
 
-Default RIS-UE path count:
+### 4.5 Cascaded Channel Label
 
-- `1` LoS path
-- `1` NLoS path
-
-So in the default config:
-
-```math
-L_{RU} = 2
-```
-
-### 4.4 Cascaded Channel
-
-The channel label used for learning is the **cascaded channel**:
+The learning target is the cascaded channel:
 
 ```math
 \mathbf{H}_c = \mathbf{G} \operatorname{diag}(\mathbf{h}_{RU})
 ```
 
-Shape:
+Shapes:
 
 - `G`: `M x N`
 - `diag(h_RU)`: `N x N`
 - `H_c`: `M x N`
 
-This is exactly what the code computes in [src/ris_dataset/generator.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_dataset/generator.py):
+In code this is computed efficiently as element-wise column scaling:
 
 ```python
 cascaded_channel = g_br * h_ru[np.newaxis, :]
 ```
 
-This works because multiplying each column of `G` by the corresponding RIS-user coefficient is equivalent to multiplying by `diag(h_RU)`.
+because multiplying each column of `G` by one RIS-user coefficient is equivalent to right-multiplying by `diag(h_RU)`.
 
-### 4.5 Pilot Observation Model
+### 4.6 Pilot Observation Model
 
-The clean received pilot matrix is generated as:
+The clean received pilot matrix is:
 
 ```math
 \mathbf{Y}_{clean} = \mathbf{W}^H \mathbf{H}_c \mathbf{\Omega}
 ```
 
-In this v1 dataset:
+In this repository:
 
-- the BS combiner is fixed as `W = I_M`
-- pilot symbols are fixed to `1`
+- `W = I_M`,
+- pilot symbols are fixed to `1`.
 
-so the equation reduces to:
+So the implemented observation equation becomes:
 
 ```math
 \mathbf{Y}_{clean} = \mathbf{H}_c \mathbf{\Omega}
@@ -307,83 +243,55 @@ so the equation reduces to:
 
 where:
 
-- `Y_clean` has shape `M x Q`
-- `Omega` has shape `N x Q`
-- `Q` is the pilot length
+- `Y_clean` has shape `M x Q`,
+- `Omega` has shape `N x Q`,
+- `Q` is the pilot length.
 
-Noisy observations are then:
+Noisy observations are:
 
 ```math
 \mathbf{Y} = \mathbf{Y}_{clean} + \mathbf{N}
 ```
 
-with complex Gaussian noise:
+with circular complex Gaussian noise.
 
-```math
-\mathbf{N}_{m,q} \sim \mathcal{CN}(0, \sigma_n^2)
-```
+### 4.7 Per-Sample SNR Control
 
-### 4.6 Noise Variance and SNR Control
-
-For each generated sample, the code measures the clean observation power:
+For every sample, the code measures the clean observation power:
 
 ```math
 P_s = \frac{1}{MQ}\|\mathbf{Y}_{clean}\|_F^2
 ```
 
-and then computes the noise variance needed for the requested SNR:
+and sets the noise variance as:
 
 ```math
 \sigma_n^2 = \frac{P_s}{10^{\text{SNR}_{dB}/10}}
 ```
 
-Noise is generated as circularly symmetric complex Gaussian noise:
+So the dataset does not use one fixed global noise variance. Instead:
 
-```math
-\mathbf{N}
-=
-\sqrt{\sigma_n^2/2}
-\left(
-\mathbf{N}_R + j\mathbf{N}_I
-\right)
-```
+- each sample gets its own noise variance,
+- the requested SNR is enforced relative to that sample's clean observation power.
 
-where `N_R` and `N_I` are i.i.d. standard normal.
+### 4.8 RIS Codebook and Quantization
 
-This is important because it means the dataset does **not** use a fixed global noise variance. Instead, every sample is normalized to match the requested SNR relative to that sample's clean pilot power.
+The RIS control matrix `Omega` is deterministic and DFT-based.
 
-### 4.7 Pilot Codebook
+If `Q <= N`:
 
-The RIS phase control matrix `Omega` is deterministic and DFT-based.
+- use the first `Q` columns of the normalized `N x N` DFT matrix.
 
-If `Q <= N`, the generator uses:
+If `Q > N`:
 
-```math
-\mathbf{\Omega} = \text{first } Q \text{ columns of } \mathbf{F}_N
-```
+- use the first `N` rows of the normalized `Q x Q` DFT matrix.
 
-where `F_N` is the normalized `N x N` DFT matrix.
+Phase control defaults:
 
-If `Q > N`, the generator uses:
+- `ideal_continuous_phase = false`
+- `bits = 2`
 
-```math
-\mathbf{\Omega} = \text{first } N \text{ rows of } \mathbf{F}_Q
-```
-
-This follows the planned rule:
-
-- use DFT columns when pilots are fewer than RIS elements
-- use DFT rows when pilots exceed RIS size
-
-Implementation:
-
-- [src/ris_dataset/pilots.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_dataset/pilots.py)
-
-### 4.8 RIS Phase Quantization
-
-By default, RIS phases are **2-bit quantized**.
-
-That means each RIS coefficient phase is rounded to one of:
+So by default the RIS phases are 2-bit quantized to:
 
 ```math
 \left\{
@@ -391,90 +299,61 @@ That means each RIS coefficient phase is rounded to one of:
 \right\}
 ```
 
-The code supports ideal continuous phase too:
+## 5. Exact Dataset Hyperparameters
 
-- set `pilot_quantization.ideal_continuous_phase: true`
+### 5.1 Default Small Dataset
 
-in the YAML config.
+From [configs/dataset_small.yaml](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/configs/dataset_small.yaml):
 
-## 5. Channel Realism Choices
+| Setting | Exact value |
+| --- | --- |
+| Carrier frequency | `28000000000.0 Hz` (`28 GHz`) |
+| Element spacing | `0.5 lambda` |
+| BS array | `2 x 4` |
+| BS antennas | `8` |
+| RIS array | `4 x 4` |
+| RIS elements | `16` |
+| Direct path | `false` |
+| BS-RIS LoS paths | `1` |
+| BS-RIS NLoS paths | `2` |
+| RIS-UE LoS paths | `1` |
+| RIS-UE NLoS paths | `1` |
+| LoS path-loss exponent | `2.1` |
+| LoS shadowing std | `3.6 dB` |
+| NLoS path-loss exponent | `3.4` |
+| NLoS shadowing std | `9.7 dB` |
+| LoS gain variance | `sigma_los_sq = 1.0` |
+| NLoS gain variance | `sigma_nlos_sq = 0.01` |
+| NLoS distance scale min | `1.05` |
+| NLoS distance scale max | `1.5` |
+| Pilot lengths | `[8, 12, 16, 24, 32]` |
+| SNR values (dB) | `[0, 5, 10, 15, 20]` |
+| Train samples | `8000` |
+| Validation samples | `1000` |
+| Test samples | `1000` |
 
-This repository tries to stay realistic without becoming too large for a B.Tech-level project.
+Per pilot length, the default dataset size is:
 
-### 5.1 LoS vs NLoS Structure
+- total samples: `10000`
+- train: `8000`
+- val: `1000`
+- test: `1000`
 
-For each link:
+Across all five pilot lengths, the total number of saved examples is:
 
-- LoS angles are derived from actual geometry
-- NLoS angles are sampled randomly
+- `50000`
 
-This means:
+### 5.2 Default Large Dataset
 
-- the main dominant path is geometry-consistent
-- the weaker paths add multipath richness
+From [configs/dataset_large.yaml](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/configs/dataset_large.yaml):
 
-### 5.2 Large-Scale Path Loss
+- BS array: `4 x 4` -> `16` antennas
+- RIS array: `4 x 8` -> `32` elements
+- same pilot lengths, SNR grid, geometry style, and path modeling structure
 
-The code uses a **close-in (CI) reference-distance path loss model**:
+## 6. What Is Stored in Each `.npz`
 
-```math
-PL(d) = FSPL(1m) + 10n \log_{10}(d) + X_{\sigma}
-```
-
-with:
-
-```math
-FSPL(1m) = 32.4 + 20 \log_{10}(f_{GHz})
-```
-
-where:
-
-- `d` is distance in meters
-- `n` is the path-loss exponent
-- `X_sigma` is log-normal shadowing in dB
-
-Default values:
-
-- LoS exponent = `2.1`
-- LoS shadowing std = `3.6 dB`
-- NLoS exponent = `3.4`
-- NLoS shadowing std = `9.7 dB`
-
-These values are chosen to reflect 28 GHz urban microcell trends and are consistent with the literature referenced at the end of this file.
-
-### 5.3 Small-Scale Fading Power
-
-Path gains use:
-
-- `sigma_los^2 = 1.0`
-- `sigma_nlos^2 = 0.01`
-
-Interpretation:
-
-- LoS paths are dominant
-- NLoS paths are much weaker
-
-For LoS:
-
-- amplitude is deterministic up to phase, scaled by path loss
-
-For NLoS:
-
-- amplitude is complex Gaussian, scaled by path loss and reduced variance
-
-### 5.4 NLoS Distance Stretch
-
-The NLoS distance is not forced to equal the direct geometric distance.
-
-Instead, the generator multiplies the direct path length by a random factor:
-
-- between `1.05` and `1.5`
-
-This is a practical approximation to reflect the fact that reflected or scattered paths are usually longer than the direct path.
-
-## 6. What Exactly Is Saved In The Dataset
-
-Each `.npz` file stores:
+Each split file stores:
 
 - `observations`
 - `channel`
@@ -485,9 +364,7 @@ Each `.npz` file stores:
 - `channel_norm`
 - `seed`
 
-### 6.1 Stored Shapes
-
-For a fixed pilot length `Q`:
+For pilot length `Q`, the saved tensor shapes are:
 
 - `observations`: `[num_samples, Q, M, 2]`
 - `channel`: `[num_samples, M, N, 2]`
@@ -498,106 +375,419 @@ For a fixed pilot length `Q`:
 - `channel_norm`: `[num_samples]`
 - `seed`: `[num_samples]`
 
-The last dimension of size `2` always means:
+The last dimension always means:
 
 - `[..., 0] = real part`
 - `[..., 1] = imaginary part`
 
-### 6.2 Why `observations` Is Stored As `[Q, M, 2]`
+Important layout detail:
 
-The mathematical observation matrix is generated as `M x Q`.
+- the physical observation is formed as an `M x Q` matrix,
+- before saving, it is transposed to `[Q, M]`,
+- this makes the pilot axis and BS antenna axis easy to treat as 2D spatial dimensions for the CNN.
 
-Before saving, the generator transposes it to `Q x M` so that:
+## 7. Complete CNN Logic in Depth
 
-- time/pilot index comes first
-- antenna index comes second
+This is the core training logic implemented by the code.
 
-This is often convenient for CNN preprocessing because it makes the pilot dimension explicit as a spatial axis.
+### 7.1 Learning Task
 
-## 7. Default Configurations
+The CNN learns a direct regression:
 
-### 7.1 Small Configuration
+```math
+f_{\theta} : \mathbf{Y} \mapsto \hat{\mathbf{H}}_c
+```
 
-File:
+where:
 
-- [configs/dataset_small.yaml](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/configs/dataset_small.yaml)
+- input = noisy pilot observation tensor,
+- output = estimated cascaded BS-RIS-user channel.
 
-Values:
+The model does not estimate `G` and `h_RU` separately. It learns the full cascaded channel `H_c` directly.
 
-- carrier frequency = `28 GHz`
-- spacing = `0.5 lambda`
-- BS array = `2 x 4` -> `8` antennas
-- RIS array = `4 x 4` -> `16` elements
-- direct path = disabled
+### 7.2 Input and Target Tensors Seen by the CNN
 
-### 7.2 Large Configuration
+Raw saved tensors:
 
-File:
+- observations: `[batch, Q, M, 2]`
+- channel labels: `[batch, M, N, 2]`
 
-- [configs/dataset_large.yaml](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/configs/dataset_large.yaml)
+Before training, [src/ris_training/data.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/data.py) transposes them to channels-first format:
 
-Values:
+- input to CNN: `[batch, 2, Q, M]`
+- target for CNN: `[batch, 2, M, N]`
 
-- carrier frequency = `28 GHz`
-- spacing = `0.5 lambda`
-- BS array = `4 x 4` -> `16` antennas
-- RIS array = `4 x 8` -> `32` elements
-- same geometry, path, and SNR defaults
+So:
 
-## 8. Generation Pipeline
+- channel `0` is the real part,
+- channel `1` is the imaginary part.
 
-For each sample, the code does the following:
+For the default small configuration:
 
-1. Sample a UE position from the configured sector.
-2. Compute BS-RIS and RIS-UE distances.
-3. Build the BS-RIS sparse channel `G`.
-4. Build the RIS-UE sparse channel `h_RU`.
-5. Form the cascaded channel `H_c = G diag(h_RU)`.
-6. Build the RIS phase codebook `Omega` for the current pilot length.
-7. Compute clean observations `Y_clean = H_c Omega`.
-8. Measure clean pilot power.
-9. Compute noise variance from requested SNR.
-10. Add complex Gaussian noise.
-11. Save input/label tensors and metadata.
+- input shape for `Q = 8`: `[batch, 2, 8, 8]`
+- input shape for `Q = 12`: `[batch, 2, 12, 8]`
+- input shape for `Q = 16`: `[batch, 2, 16, 8]`
+- input shape for `Q = 24`: `[batch, 2, 24, 8]`
+- input shape for `Q = 32`: `[batch, 2, 32, 8]`
+- target shape for every pilot length: `[batch, 2, 8, 16]`
 
-For each split:
+### 7.3 Normalization Logic
 
-1. The split gets a deterministic seed derived from:
-   - master seed
-   - pilot length
-   - split name
-2. Sample-level seeds are generated from that split seed.
-3. SNR values are assigned evenly across all requested SNR points.
-4. Samples are shuffled across SNR values.
+Normalization is fit only on the training split.
 
-This makes the dataset:
+For both observations and channel labels, the code computes:
 
-- balanced
-- reproducible
-- easy to regenerate exactly
+- mean over axes `(samples, height, width)`,
+- standard deviation over axes `(samples, height, width)`,
+- separately for the real and imaginary channels.
 
-## 9. How To Run
+That means the normalization statistics are:
 
-### 9.1 Create a Virtual Environment
+- one mean for the real part,
+- one mean for the imaginary part,
+- one standard deviation for the real part,
+- one standard deviation for the imaginary part.
+
+The standardized tensors are:
+
+```math
+\tilde{x} = \frac{x - \mu_x}{\sigma_x}, \qquad
+\tilde{h} = \frac{h - \mu_h}{\sigma_h}
+```
+
+Important implementation detail:
+
+- if a standard deviation is numerically tiny, the code replaces it with `1.0`,
+- this avoids division-by-zero or exploding normalization.
+
+Also important:
+
+- training loss is computed on normalized targets,
+- NMSE is computed after denormalizing predictions back to the original channel scale.
+
+### 7.4 Exact CNN Architecture
+
+The model is defined in [src/ris_training/model.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/model.py).
+
+It is a compact convolutional regressor with:
+
+- 3 convolution blocks,
+- no pooling,
+- no stride greater than 1,
+- no residual connections,
+- one hidden fully connected layer,
+- one final linear output layer.
+
+Each convolution block is:
+
+1. `Conv2d(kernel_size=3, padding=1, bias=False)`
+2. `BatchNorm2d`
+3. `ReLU(inplace=True)`
+4. `Dropout2d`
+
+Exact default architecture hyperparameters:
+
+- `conv_channels = (32, 64, 64)`
+- `hidden_dim = 256`
+- `dropout = 0.1`
+
+Because padding is `1` and the kernel is `3 x 3`, every convolution preserves spatial resolution.
+
+So the feature extractor does not shrink the input map:
+
+- pilot dimension stays `Q`,
+- BS antenna dimension stays `M`.
+
+### 7.5 Layer-by-Layer Tensor Flow
+
+For the default small config with `Q = 16`, `M = 8`, `N = 16`:
+
+1. Input observation tensor:
+   `[batch, 2, 16, 8]`
+2. Conv block 1:
+   `[batch, 32, 16, 8]`
+3. Conv block 2:
+   `[batch, 64, 16, 8]`
+4. Conv block 3:
+   `[batch, 64, 16, 8]`
+5. Flatten:
+   `[batch, 64 x 16 x 8] = [batch, 8192]`
+6. Fully connected hidden layer:
+   `[batch, 256]`
+7. Output linear layer:
+   `[batch, 2 x 8 x 16] = [batch, 256]`
+8. Reshape:
+   `[batch, 2, 8, 16]`
+
+General formulas:
+
+- input size to CNN = `2 x Q x M`
+- output size from CNN = `2 x M x N`
+- flattened feature size after conv stack = `64 x Q x M`
+
+### 7.6 Exact Parameter Count
+
+For the default CNN architecture, the parameter count depends on `Q`, `M`, and `N` because the fully connected layers depend on the flattened feature size and output size.
+
+General parameter-count formula for this exact implementation:
+
+```math
+\text{params}
+= 56448 + 16384QM + 514MN
+```
+
+where:
+
+- `Q` = pilot length,
+- `M` = number of BS antennas,
+- `N` = number of RIS elements.
+
+For the default small dataset (`M = 8`, `N = 16`):
+
+| Pilot length `Q` | Exact parameter count |
+| --- | ---: |
+| `8` | `1,170,816` |
+| `12` | `1,695,104` |
+| `16` | `2,219,392` |
+| `24` | `3,267,968` |
+| `32` | `4,316,544` |
+
+This happens because:
+
+- the convolutional part is fixed,
+- the flattened feature vector grows linearly with pilot length.
+
+### 7.7 What the CNN Is Trying to Learn
+
+Conceptually, the CNN is learning this mapping:
+
+- local spatial patterns across nearby pilots,
+- spatial correlations across nearby BS antennas,
+- relationships between real and imaginary parts,
+- structured distortions introduced by noise and reduced pilot observations,
+- how to convert the observation map into the full `M x N` cascaded channel.
+
+Why the model is set up this way:
+
+- the input is naturally a 2D map: pilot index by BS antenna,
+- the target is naturally a 2D map: BS antenna by RIS element,
+- convolutions can exploit local structure before the dense layers reconstruct the full channel.
+
+### 7.8 What This CNN Adds Beyond Plain LS
+
+The main addition of the CNN is not a new analytical estimator formula. The addition is:
+
+- it learns from many synthetic examples,
+- it can exploit the structure of the training distribution,
+- it can reduce the error caused by underdetermined or noisy pilot observations,
+- it can outperform LS especially when pilot length is small.
+
+LS treats each test sample independently through a pseudoinverse. The CNN instead uses:
+
+- dataset-level statistical regularities,
+- sparse-channel structure implicitly present in the training data,
+- learned nonlinear denoising and reconstruction.
+
+That is the central research improvement in this project.
+
+## 8. Exact Training Logic
+
+### 8.1 Dataloaders
+
+For each pilot length:
+
+- one train dataloader is created,
+- one validation dataloader is created,
+- one test dataloader is created.
+
+Exact defaults:
+
+- `batch_size = 128`
+- `shuffle = True` for train
+- `shuffle = False` for val/test
+- `num_workers = 0`
+
+### 8.2 Optimizer, Loss, and Device
+
+Exact defaults from [configs/training_cnn.yaml](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/configs/training_cnn.yaml):
+
+| Setting | Exact value |
+| --- | --- |
+| Experiment name | `cnn_baseline` |
+| Data root | `data/dataset_small` |
+| Output root | `data/runs` |
+| Pilot lengths | `[8, 12, 16, 24, 32]` |
+| Device | `auto` |
+| Batch size | `128` |
+| Num workers | `0` |
+| Epochs | `60` |
+| Seed | `2026` |
+| Optimizer | `AdamW` |
+| Learning rate | `0.001` |
+| Weight decay | `0.0001` |
+| Early stopping patience | `8` |
+| Early stopping min delta | `0.0` |
+| Conv channels | `[32, 64, 64]` |
+| Hidden dimension | `256` |
+| Dropout | `0.1` |
+| Plot examples | `3` |
+
+Exact device-selection logic:
+
+- if `--device cpu`, use CPU,
+- if `--device mps`, require Apple Metal/MPS,
+- if `--device auto`, use MPS when available, otherwise CPU.
+
+### 8.3 Loss and Metric
+
+Training loss:
+
+- `nn.MSELoss()` on normalized target tensors.
+
+Training/validation metric tracked every epoch:
+
+- NMSE computed after denormalizing predictions and targets back to physical channel scale.
+
+Batch NMSE is computed as:
+
+```math
+\text{NMSE}
+=
+\frac{\|\hat{H} - H\|_F^2}{\|H\|_F^2}
+```
+
+with safe clamping to avoid division by zero.
+
+### 8.4 Epoch Logic
+
+For each epoch, [src/ris_training/trainer.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/trainer.py) does:
+
+1. run one full training pass,
+2. run one full validation pass,
+3. record:
+   - learning rate,
+   - train loss,
+   - val loss,
+   - train NMSE,
+   - val NMSE,
+   - train NMSE in dB,
+   - val NMSE in dB,
+4. save `last.pt`,
+5. if validation NMSE improves by more than `min_delta`, save `best.pt`,
+6. update early stopping counter,
+7. stop if no improvement is seen for `patience` consecutive epochs.
+
+Important exact behavior:
+
+- there is no learning-rate scheduler,
+- there is no mixed precision,
+- there is no gradient clipping,
+- there is no data augmentation,
+- there is no warmup,
+- model selection is based on validation NMSE, not validation loss.
+
+### 8.5 Early Stopping Rule
+
+Improvement rule:
+
+```python
+if best_val_nmse - val_nmse > min_delta:
+```
+
+With the default config:
+
+- `min_delta = 0.0`
+
+So any strict improvement in validation NMSE resets patience.
+
+Stopping rule:
+
+- stop once `epochs_without_improvement >= 8`.
+
+### 8.6 Evaluation After Training
+
+After training stops:
+
+1. reload `best.pt`,
+2. predict validation and test sets with the CNN,
+3. denormalize predictions,
+4. compute CNN MSE/NMSE/NMSE(dB),
+5. compute LS predictions on the same splits,
+6. compute LS MSE/NMSE/NMSE(dB),
+7. group results by SNR,
+8. save plots and summary files.
+
+The final comparison is therefore:
+
+- CNN on validation and test,
+- LS on validation and test,
+- mean metrics and per-SNR metrics for both.
+
+## 9. Least Squares Baseline
+
+The repository uses a transparent LS estimator as the classical baseline:
+
+```math
+\hat{\mathbf{H}}_{LS}
+=
+\mathbf{Y}
+\mathbf{\Omega}^H
+\left(
+\mathbf{\Omega}\mathbf{\Omega}^H
+\right)^{\dagger}
+```
+
+In the evaluation code, the implementation handles:
+
+- one shared `Omega` for all samples when possible,
+- or per-sample `Omega` if needed.
+
+Why LS is useful here:
+
+- it is easy to understand,
+- it gives a deterministic baseline,
+- it shows how much performance the CNN gains over a classical pseudoinverse estimator.
+
+## 10. End-to-End Pipeline Summary
+
+For one sample, the full pipeline is:
+
+1. sample a user location,
+2. compute geometry-derived LoS quantities,
+3. generate BS-RIS sparse channel `G`,
+4. generate RIS-UE sparse channel `h_RU`,
+5. form cascaded channel `H_c`,
+6. build the DFT-based RIS pilot matrix `Omega`,
+7. compute clean pilots `Y_clean = H_c Omega`,
+8. compute noise variance from requested SNR,
+9. add complex Gaussian noise,
+10. save observation and channel tensors,
+11. normalize train/val/test using train-split statistics,
+12. train CNN on normalized data,
+13. select best checkpoint using validation NMSE,
+14. evaluate CNN and LS on held-out data,
+15. save plots and summaries.
+
+## 11. Commands to Run
+
+### 11.1 Create Environment
 
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 ```
 
-For macOS and Apple Silicon, install PyTorch from the official PyTorch guide:
+Install PyTorch separately using the correct command for your platform from the official guide:
 
 - [PyTorch Start Locally](https://pytorch.org/get-started/locally/)
 
-For current macOS stable pip installs, PyTorch documents `pip3 install torch torchvision`, and the MPS backend is available through `torch.backends.mps.is_available()` on supported Apple Silicon systems.
-
-Install the rest of the local dependencies after PyTorch:
+Then install the remaining dependencies:
 
 ```bash
 .venv/bin/python -m pip install numpy PyYAML matplotlib pytest
 ```
 
-### 9.2 Generate the Default Dataset
+### 11.2 Generate Default Dataset
 
 ```bash
 .venv/bin/python scripts/generate_dataset.py \
@@ -606,7 +796,7 @@ Install the rest of the local dependencies after PyTorch:
   --seed 2026
 ```
 
-### 9.3 Generate the Larger Dataset
+### 11.3 Generate Large Dataset
 
 ```bash
 .venv/bin/python scripts/generate_dataset.py \
@@ -615,9 +805,9 @@ Install the rest of the local dependencies after PyTorch:
   --seed 2026
 ```
 
-### 9.4 Train One Pilot Length
+### 11.4 Train One Pilot Length
 
-This uses the default training config in [configs/training_cnn.yaml](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/configs/training_cnn.yaml) and trains only `Q = 16`:
+Example for `Q = 16`:
 
 ```bash
 .venv/bin/python scripts/train_cnn.py \
@@ -627,7 +817,7 @@ This uses the default training config in [configs/training_cnn.yaml](/Users/piyu
   --device auto
 ```
 
-### 9.5 Train All Pilot Lengths
+### 11.5 Train All Pilot Lengths
 
 ```bash
 .venv/bin/python scripts/train_cnn.py \
@@ -637,21 +827,20 @@ This uses the default training config in [configs/training_cnn.yaml](/Users/piyu
   --device auto
 ```
 
-Important defaults in the training pipeline:
+Useful CLI overrides supported by [scripts/train_cnn.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/scripts/train_cnn.py):
 
-- device selection: `auto` -> `mps` first, then `cpu`
-- dtype: `float32`
-- batch size: `128`
-- epochs: `60`
-- optimizer: `AdamW`
-- learning rate: `1e-3`
-- weight decay: `1e-4`
-- early stopping patience: `8`
-- `num_workers = 0` to stay friendly to MacBook memory and process limits
+- `--epochs`
+- `--batch-size`
+- `--seed`
+- `--lr`
+- `--patience`
+- `--device`
+- `--data-root`
+- `--output-root`
 
-## 10. Output Directory Layout
+## 12. Output Directory Layout
 
-After generation, the directory looks like this:
+After dataset generation:
 
 ```text
 data/ris_mmwave_v1/
@@ -661,38 +850,17 @@ data/ris_mmwave_v1/
 │   ├── val.npz
 │   └── test.npz
 ├── pilots_12/
-│   ├── train.npz
-│   ├── val.npz
-│   └── test.npz
 ├── pilots_16/
-│   ├── train.npz
-│   ├── val.npz
-│   └── test.npz
 ├── pilots_24/
-│   ├── train.npz
-│   ├── val.npz
-│   └── test.npz
 └── pilots_32/
-    ├── train.npz
-    ├── val.npz
-    └── test.npz
 ```
 
-`manifest.json` stores:
-
-- generation timestamp
-- global config
-- pilot lengths
-- split counts
-- output tensor shapes
-- SNR histograms
-
-The training pipeline writes a separate run directory:
+After training:
 
 ```text
 data/runs/
 └── cnn_baseline/
-    └── 20260421-153000/
+    └── YYYYMMDD-HHMMSS/
         ├── pilot_length_summary.csv
         ├── pilot_length_snr_comparison.png
         ├── pilot_length_vs_gain.png
@@ -715,186 +883,96 @@ data/runs/
             └── ...
 ```
 
-Per-pilot run outputs:
+Per-pilot outputs:
 
-- `best.pt`: checkpoint with the best validation NMSE
-- `last.pt`: checkpoint from the final training epoch
-- `history.csv`: epoch-by-epoch train and validation loss/NMSE
-- `metrics.json`: validation and test summaries for CNN and LS
-- `normalization.json`: train-split standardization statistics
-- `predictions.npz`: saved test targets plus CNN and LS predictions
-- `plots/*.png`: figures ready to use in the report
+- `best.pt`: best validation-NMSE checkpoint,
+- `last.pt`: final-epoch checkpoint,
+- `history.csv`: epoch-wise train/val loss and NMSE,
+- `metrics.json`: CNN and LS summaries,
+- `normalization.json`: mean/std used for normalization,
+- `predictions.npz`: saved target and predictions,
+- `plots/*.png`: report-ready figures.
 
-Multi-pilot run outputs:
+Cross-pilot outputs:
 
-- `pilot_length_vs_nmse.png`: CNN and LS test NMSE versus pilot length
-- `pilot_length_vs_gain.png`: CNN gain over LS versus pilot length
-- `pilot_length_snr_comparison.png`: all-pilot comparison of CNN test NMSE and gain across SNR
+- `pilot_length_summary.csv`
+- `pilot_length_vs_nmse.png`
+- `pilot_length_vs_gain.png`
+- `pilot_length_snr_comparison.png`
+- `experiment_summary.md`
 
-## 11. Verification And Tests
+## 13. Tests and Verification
 
-The repository includes tests in:
+The tests check:
 
-- [tests/test_generator.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/tests/test_generator.py)
-- [tests/test_training.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/tests/test_training.py)
+- dataset smoke generation,
+- reproducibility with fixed seed,
+- finite numerical outputs,
+- SNR consistency,
+- LS sanity behavior,
+- normalization correctness,
+- CNN forward output shapes,
+- metric grouping by SNR,
+- training smoke run artifact creation,
+- multi-pilot comparison artifact creation.
 
-The tests cover:
-
-- dataset smoke generation
-- exact reproducibility with same seed
-- different outputs with different seeds
-- finite numerical values
-- stronger channels for closer users on average
-- channel rank bounded by path structure
-- requested SNR matching measured SNR within tolerance
-- LS doing better with fully observed pilots than with short pilots
-- balanced SNR distribution in the manifest and `.npz` files
-- training loader tensor shapes and normalization restoration
-- CNN forward-shape checks for multiple pilot lengths
-- metrics grouping by SNR
-- one-epoch end-to-end training smoke run with saved artifacts
-
-Run tests with:
+Run them with:
 
 ```bash
 .venv/bin/pytest -q
 ```
 
-## 12. Least Squares Baseline Used For Sanity Check
-
-This repository includes a simple LS estimator that is reused in both the generator sanity checks and the CNN evaluation pipeline:
-
-```math
-\hat{\mathbf{H}}_{LS}
-=
-\mathbf{Y}
-\mathbf{\Omega}^H
-\left(
-\mathbf{\Omega}\mathbf{\Omega}^H
-\right)^{\dagger}
-```
-
-Implementation:
-
-- [src/ris_dataset/generator.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_dataset/generator.py)
-
-This baseline is used to confirm that:
-
-- longer pilot lengths should improve identifiability
-- underdetermined short-pilot setups are harder
-- the trained CNN can be compared against a transparent classical reference
-
-## 13. Assumptions And Limits Of This v1 Dataset
-
-This dataset is intentionally focused.
+## 14. Assumptions and Limits
 
 Current assumptions:
 
-- single-user only
-- narrowband only
-- direct BS-user path disabled
-- RIS is passive
-- BS combiner fixed to identity
-- pilot symbols fixed to `1`
-- no hardware impairments
-- no frequency selectivity
-- no mobility over time
+- single-user only,
+- narrowband only,
+- no direct BS-user path,
+- passive RIS,
+- identity BS combiner,
+- unit pilot symbols,
+- no mobility,
+- no frequency selectivity,
+- no hardware impairments.
 
-This is a strong starting point for a course project because it keeps the estimation target clear:
+These are simplifications, but they are deliberate. They keep the problem narrow enough that:
 
-- learn the cascaded channel from limited noisy pilot observations
+- the dataset is easy to regenerate,
+- the estimator target is clear,
+- CNN-vs-LS comparisons are interpretable,
+- reduced-pilot experiments are easy to present in a report.
 
-Future extensions could include:
+## 15. Why This Is a Good Project-Scale CNN
 
-- direct BS-user path
-- wideband OFDM channels
-- multi-user training
-- hybrid beamforming
-- time-varying channels
-- imperfect RIS elements
-- spatial correlation models
+This CNN is intentionally small and practical.
 
-## 14. Important Implementation Notes
+Why this architecture makes sense for the assignment:
 
-### 14.1 This Is Inspired By The Literature, Not A Paper Reproduction
+- it is easy to explain,
+- it has a clear input-output mapping,
+- it uses standard deep learning blocks only,
+- it is strong enough to learn denoising and channel reconstruction,
+- it is still light enough to train on a laptop-sized setup.
 
-The dataset generator is **research-informed**, but it is **not a line-by-line reproduction** of any one paper's experimental setup.
+In other words:
 
-What we borrowed from the literature:
+- the contribution is not architectural novelty,
+- the contribution is showing that a compact learned estimator can beat LS under reduced pilot budgets on a realistic synthetic RIS/mmWave dataset.
 
-- the cascaded RIS channel viewpoint
-- sparse geometric mmWave modeling
-- pilot-overhead reduction framing
-- DFT-style RIS observation matrices
-- close-in path loss motivation for 28 GHz links
+## 16. References That Informed the Design
 
-What we simplified for project practicality:
-
-- single-user only
-- narrowband only
-- identity BS combiner
-- no direct path
-- fixed scene geometry except UE position
-
-### 14.2 Why This Is Still A Good Dataset For The Assignment
-
-This dataset is well suited for your assignment because it supports the exact research question:
-
-> Can a learning-based estimator recover the RIS-assisted cascaded channel accurately even when the number of pilots is reduced?
-
-With this repository, experiments can directly produce:
-
-- NMSE vs SNR
-- NMSE vs number of pilots
-- LS vs CNN comparisons
-- training and validation loss curves
-- per-sample error histograms
-- channel heatmap examples for qualitative inspection
-
-## 15. References Used For This Implementation
-
-These are the main references that informed the dataset design.
+These references informed the dataset design and project framing. The code is inspired by them, but it is not a line-by-line reproduction of any single paper.
 
 1. Jiguang He, Henk Wymeersch, Marco Di Renzo, and Markku Juntti, *Learning to Estimate RIS-Aided mmWave Channels*, IEEE Wireless Communications Letters, vol. 11, no. 4, pp. 841-845, 2022.
    Link: [https://doi.org/10.1109/LWC.2022.3147250](https://doi.org/10.1109/LWC.2022.3147250)
-   Open repository page: [https://oulurepo.oulu.fi/handle/10024/34050](https://oulurepo.oulu.fi/handle/10024/34050)
-
-   How it influenced this repository:
-   - single-user RIS-aided channel estimation framing
-   - cascaded channel observation model
-   - reduced training overhead motivation
 
 2. Asmaa Abdallah, Abdulkadir Celik, Mohammad M. Mansour, and Ahmed M. Eltawil, *RIS-Aided mmWave MIMO Channel Estimation Using Deep Learning and Compressive Sensing*, IEEE Transactions on Wireless Communications, vol. 22, no. 5, pp. 3503-3521, 2023.
    Link: [https://doi.org/10.1109/TWC.2022.3219140](https://doi.org/10.1109/TWC.2022.3219140)
-   Open repository page: [https://scholarworks.aub.edu.lb/handle/10938/27506](https://scholarworks.aub.edu.lb/handle/10938/27506)
 
-   How it influenced this repository:
-   - RIS/mmWave sparse geometric channel structure
-   - pilot-overhead viewpoint
-   - learning plus baseline comparison mindset
-
-3. George R. MacCartney, Junhong Zhang, Shuai Nie, and Theodore S. Rappaport, *Path Loss Models for 5G Millimeter Wave Propagation Channels in Urban Microcells*, in IEEE GLOBECOM 2013, pp. 3948-3953, 2013.
+3. George R. MacCartney, Junhong Zhang, Shuai Nie, and Theodore S. Rappaport, *Path Loss Models for 5G Millimeter Wave Propagation Channels in Urban Microcells*, IEEE GLOBECOM 2013, pp. 3948-3953, 2013.
    Link: [https://doi.org/10.1109/GLOCOM.2013.6831690](https://doi.org/10.1109/GLOCOM.2013.6831690)
-   NYU page: [https://nyuscholars.nyu.edu/en/publications/path-loss-models-for-5g-millimeter-wave-propagation-channels-in-u](https://nyuscholars.nyu.edu/en/publications/path-loss-models-for-5g-millimeter-wave-propagation-channels-in-u)
 
-   How it influenced this repository:
-   - the 28 GHz close-in path loss perspective
-   - realistic LoS/NLoS path-loss exponent motivation
+## 17. Final One-Paragraph Summary
 
-## 16. Summary
-
-This repository now provides a complete RIS-assisted mmWave experimentation pipeline for a course project:
-
-- mathematically grounded synthetic dataset generation
-- configurable and reproducible split creation
-- LS baseline evaluation
-- a compact PyTorch CNN estimator
-- saved checkpoints, metrics, and plots
-- tests for both dataset generation and training
-
-That lets you build the assignment around:
-
-- NMSE vs SNR
-- NMSE vs pilot length
-- LS vs CNN comparisons
-- reduced-pilot learning performance
+This repository generates a reproducible RIS-assisted mmWave dataset, trains a compact CNN to estimate the cascaded BS-RIS-user channel from noisy reduced-pilot observations, and compares that learned estimator against LS using NMSE and SNR-wise analysis. The README now documents the full CNN logic, the exact tensor shapes, the exact optimizer and early-stopping settings, and the exact dataset/training hyperparameters used by the code.
