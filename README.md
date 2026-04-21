@@ -1,8 +1,8 @@
-# RIS-Assisted mmWave Dataset Creation
+# RIS-Assisted mmWave Dataset Creation And CNN Training
 
-This repository contains a **Python dataset generator** for a **single-user, narrowband, RIS-assisted mmWave channel estimation** problem.
+This repository contains a **Python dataset generator** and a **PyTorch CNN training pipeline** for a **single-user, narrowband, RIS-assisted mmWave channel estimation** problem.
 
-The goal of this code is not to build the final CNN yet. The goal is to create a **clean, reproducible, physically motivated synthetic dataset** that can later be used to train and evaluate:
+The goal of this code is to create a **clean, reproducible, physically motivated synthetic dataset** and then use it to train and evaluate:
 
 - Least Squares (LS)
 - compressed sensing style baselines such as OMP
@@ -29,9 +29,12 @@ It also adds realism beyond a toy simulator by including:
 
 ## 1. What This Repository Currently Does
 
-The current codebase implements the **dataset creation stage**.
+The current codebase implements two stages:
 
-It creates synthetic pairs of:
+1. **dataset creation**
+2. **CNN training and evaluation**
+
+The dataset generator creates synthetic pairs of:
 
 - **input**: noisy pilot observations seen at the BS after RIS reflection
 - **label**: the true cascaded BS-RIS-user channel
@@ -62,6 +65,13 @@ that means:
 - `10000` samples per pilot length
 - `50000` samples total across all five pilot-length folders
 
+The training pipeline then reads one pilot folder at a time, trains a compact CNN, compares it with the LS baseline, and saves:
+
+- model checkpoints
+- CSV and JSON summaries
+- CNN vs LS evaluation metrics
+- publication-style plots for the run
+
 ## 2. Repository Structure
 
 - [src/ris_dataset/config.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_dataset/config.py)
@@ -78,12 +88,30 @@ that means:
   Converts complex tensors into real/imag channel format and saves `.npz` archives.
 - [scripts/generate_dataset.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/scripts/generate_dataset.py)
   Command-line entry point.
+- [src/ris_training/config.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/config.py)
+  Loads the CNN training configuration and applies CLI overrides.
+- [src/ris_training/data.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/data.py)
+  Loads `.npz` splits, standardizes them, and prepares PyTorch datasets.
+- [src/ris_training/model.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/model.py)
+  Defines the compact CNN used for channel estimation.
+- [src/ris_training/metrics.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/metrics.py)
+  Computes MSE, NMSE, and grouped SNR summaries for CNN and LS.
+- [src/ris_training/plotting.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/plotting.py)
+  Creates saved figures for losses, NMSE, SNR sweeps, histograms, and channel heatmaps.
+- [src/ris_training/trainer.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_training/trainer.py)
+  Runs end-to-end training, checkpointing, evaluation, and report generation.
+- [scripts/train_cnn.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/scripts/train_cnn.py)
+  Training CLI for one pilot length or all configured pilot lengths.
+- [configs/training_cnn.yaml](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/configs/training_cnn.yaml)
+  Default training preset tuned for Apple Silicon-friendly experimentation.
 - [configs/dataset_small.yaml](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/configs/dataset_small.yaml)
   Default experiment preset: BS `2x4`, RIS `4x4`.
 - [configs/dataset_large.yaml](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/configs/dataset_large.yaml)
   Larger preset: BS `4x4`, RIS `4x8`.
 - [tests/test_generator.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/tests/test_generator.py)
   Smoke, reproducibility, physics, and LS sanity checks.
+- [tests/test_training.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/tests/test_training.py)
+  Loader, model-shape, metrics, and training smoke tests.
 
 ## 3. System Model
 
@@ -554,7 +582,19 @@ This makes the dataset:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install numpy PyYAML pytest
+.venv/bin/python -m pip install --upgrade pip
+```
+
+For macOS and Apple Silicon, install PyTorch from the official PyTorch guide:
+
+- [PyTorch Start Locally](https://pytorch.org/get-started/locally/)
+
+For current macOS stable pip installs, PyTorch documents `pip3 install torch torchvision`, and the MPS backend is available through `torch.backends.mps.is_available()` on supported Apple Silicon systems.
+
+Install the rest of the local dependencies after PyTorch:
+
+```bash
+.venv/bin/python -m pip install numpy PyYAML matplotlib pytest
 ```
 
 ### 9.2 Generate the Default Dataset
@@ -574,6 +614,40 @@ python3 -m venv .venv
   --out data/ris_mmwave_v1_large \
   --seed 2026
 ```
+
+### 9.4 Train One Pilot Length
+
+This uses the default training config in [configs/training_cnn.yaml](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/configs/training_cnn.yaml) and trains only `Q = 16`:
+
+```bash
+.venv/bin/python scripts/train_cnn.py \
+  --config configs/training_cnn.yaml \
+  --data-root data/ris_mmwave_v1 \
+  --pilot-length 16 \
+  --device auto
+```
+
+### 9.5 Train All Pilot Lengths
+
+```bash
+.venv/bin/python scripts/train_cnn.py \
+  --config configs/training_cnn.yaml \
+  --data-root data/ris_mmwave_v1 \
+  --pilot-length all \
+  --device auto
+```
+
+Important defaults in the training pipeline:
+
+- device selection: `auto` -> `mps` first, then `cpu`
+- dtype: `float32`
+- batch size: `128`
+- epochs: `60`
+- optimizer: `AdamW`
+- learning rate: `1e-3`
+- weight decay: `1e-4`
+- early stopping patience: `8`
+- `num_workers = 0` to stay friendly to MacBook memory and process limits
 
 ## 10. Output Directory Layout
 
@@ -613,9 +687,48 @@ data/ris_mmwave_v1/
 - output tensor shapes
 - SNR histograms
 
+The training pipeline writes a separate run directory:
+
+```text
+data/runs/
+└── cnn_baseline/
+    └── 20260421-153000/
+        ├── pilot_length_summary.csv
+        ├── pilot_length_vs_nmse.png
+        ├── experiment_summary.md
+        ├── pilots_8/
+        │   ├── best.pt
+        │   ├── last.pt
+        │   ├── history.csv
+        │   ├── metrics.json
+        │   ├── normalization.json
+        │   ├── predictions.npz
+        │   └── plots/
+        │       ├── channel_examples.png
+        │       ├── error_histogram.png
+        │       ├── loss_curve.png
+        │       ├── nmse_curve.png
+        │       └── snr_vs_nmse.png
+        └── pilots_16/
+            └── ...
+```
+
+Per-pilot run outputs:
+
+- `best.pt`: checkpoint with the best validation NMSE
+- `last.pt`: checkpoint from the final training epoch
+- `history.csv`: epoch-by-epoch train and validation loss/NMSE
+- `metrics.json`: validation and test summaries for CNN and LS
+- `normalization.json`: train-split standardization statistics
+- `predictions.npz`: saved test targets plus CNN and LS predictions
+- `plots/*.png`: figures ready to use in the report
+
 ## 11. Verification And Tests
 
-The repository includes tests in [tests/test_generator.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/tests/test_generator.py).
+The repository includes tests in:
+
+- [tests/test_generator.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/tests/test_generator.py)
+- [tests/test_training.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/tests/test_training.py)
 
 The tests cover:
 
@@ -628,6 +741,10 @@ The tests cover:
 - requested SNR matching measured SNR within tolerance
 - LS doing better with fully observed pilots than with short pilots
 - balanced SNR distribution in the manifest and `.npz` files
+- training loader tensor shapes and normalization restoration
+- CNN forward-shape checks for multiple pilot lengths
+- metrics grouping by SNR
+- one-epoch end-to-end training smoke run with saved artifacts
 
 Run tests with:
 
@@ -637,7 +754,7 @@ Run tests with:
 
 ## 12. Least Squares Baseline Used For Sanity Check
 
-Although this repository does not yet train the CNN, it already includes a simple LS estimator for validation:
+This repository includes a simple LS estimator that is reused in both the generator sanity checks and the CNN evaluation pipeline:
 
 ```math
 \hat{\mathbf{H}}_{LS}
@@ -653,12 +770,11 @@ Implementation:
 
 - [src/ris_dataset/generator.py](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/src/ris_dataset/generator.py)
 
-This is used only as a sanity check to confirm that:
+This baseline is used to confirm that:
 
 - longer pilot lengths should improve identifiability
 - underdetermined short-pilot setups are harder
-
-That is exactly the setting where a CNN can later be tested for reduced-pilot performance.
+- the trained CNN can be compared against a transparent classical reference
 
 ## 13. Assumptions And Limits Of This v1 Dataset
 
@@ -718,11 +834,14 @@ This dataset is well suited for your assignment because it supports the exact re
 
 > Can a learning-based estimator recover the RIS-assisted cascaded channel accurately even when the number of pilots is reduced?
 
-With this dataset, later experiments can directly produce:
+With this repository, experiments can directly produce:
 
 - NMSE vs SNR
 - NMSE vs number of pilots
 - LS vs CNN comparisons
+- training and validation loss curves
+- per-sample error histograms
+- channel heatmap examples for qualitative inspection
 
 ## 15. References Used For This Implementation
 
@@ -756,22 +875,18 @@ These are the main references that informed the dataset design.
 
 ## 16. Summary
 
-This repository now provides a complete first-stage dataset pipeline for RIS-assisted mmWave channel estimation:
+This repository now provides a complete RIS-assisted mmWave experimentation pipeline for a course project:
 
-- mathematically grounded
-- configurable
-- reproducible
-- balanced across SNR and pilot length
-- already verified by tests
+- mathematically grounded synthetic dataset generation
+- configurable and reproducible split creation
+- LS baseline evaluation
+- a compact PyTorch CNN estimator
+- saved checkpoints, metrics, and plots
+- tests for both dataset generation and training
 
-The next natural step after this dataset is to train:
-
-- an LS baseline
-- optionally an OMP baseline
-- a compact CNN that takes `observations` as input and predicts `channel`
-
-That will let you build the full assignment around:
+That lets you build the assignment around:
 
 - NMSE vs SNR
 - NMSE vs pilot length
+- LS vs CNN comparisons
 - reduced-pilot learning performance

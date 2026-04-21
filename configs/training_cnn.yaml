@@ -1,0 +1,24 @@
+experiment_name: cnn_baseline
+data_root: data/dataset_small
+output_root: data/runs
+pilot_lengths: [8, 12, 16, 24, 32]
+device: auto
+batch_size: 128
+num_workers: 0
+epochs: 60
+seed: 2026
+
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0001
+
+early_stopping:
+  patience: 8
+  min_delta: 0.0
+
+model:
+  conv_channels: [32, 64, 64]
+  hidden_dim: 256
+  dropout: 0.1
+
+plot_examples: 3
