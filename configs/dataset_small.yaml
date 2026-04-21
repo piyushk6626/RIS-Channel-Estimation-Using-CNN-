@@ -1,0 +1,51 @@
+carrier_frequency_hz: 28000000000.0
+element_spacing_lambda: 0.5
+
+bs_array:
+  rows: 2
+  cols: 4
+
+ris_array:
+  rows: 4
+  cols: 4
+
+direct_path_enabled: false
+bs_position_m: [0.0, 0.0, 8.0]
+ris_position_m: [20.0, 0.0, 5.0]
+
+ue_sector:
+  radius_min_m: 5.0
+  radius_max_m: 25.0
+  azimuth_min_deg: -60.0
+  azimuth_max_deg: 60.0
+  height_m: 1.5
+
+paths:
+  bs_ris:
+    los_paths: 1
+    nlos_paths: 2
+  ris_ue:
+    los_paths: 1
+    nlos_paths: 1
+
+path_loss:
+  los_exponent: 2.1
+  los_shadow_std_db: 3.6
+  nlos_exponent: 3.4
+  nlos_shadow_std_db: 9.7
+  sigma_los_sq: 1.0
+  sigma_nlos_sq: 0.01
+  nlos_distance_scale_min: 1.05
+  nlos_distance_scale_max: 1.5
+
+pilot_quantization:
+  ideal_continuous_phase: false
+  bits: 2
+
+pilot_lengths: [8, 12, 16, 24, 32]
+snr_db_values: [0, 5, 10, 15, 20]
+
+splits:
+  train: 8000
+  val: 1000
+  test: 1000
