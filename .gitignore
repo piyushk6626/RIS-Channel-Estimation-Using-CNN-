@@ -202,7 +202,24 @@ cython_debug/
 .cursorindexingignore
 
 # Project outputs
-data/
+# Ignore generated data by default, but keep lightweight run summaries and plots.
+data/*
+!data/runs/
+data/runs/*
+!data/runs/**/
+!data/runs/**/*.md
+!data/runs/**/*.csv
+!data/runs/**/*.json
+!data/runs/**/*.png
+
+# Large / binary training artifacts should not be committed.
+data/runs/**/*.pt
+data/runs/**/*.pth
+data/runs/**/*.ckpt
+data/runs/**/*.npz
+data/runs/**/*.npy
+data/runs/**/*.onnx
+data/runs/**/*.safetensors
 
 # Marimo
 marimo/_static/

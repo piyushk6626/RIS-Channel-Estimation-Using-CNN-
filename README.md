@@ -20,6 +20,39 @@ The main research question supported by this codebase is:
 
 > Can a compact CNN recover the RIS-assisted cascaded channel better than LS when the number of pilots is limited?
 
+## Latest Stored Results
+
+This repository already includes a full reference run at [`data/runs/cnn_baseline/20260421-221441`](data/runs/cnn_baseline/20260421-221441). That run is based on the dataset in [`data/ris_mmwave_v1/manifest.json`](data/ris_mmwave_v1/manifest.json) and uses the larger `4 x 4` BS / `4 x 8` RIS setting, i.e. `M = 16` antennas and `N = 32` RIS elements.
+
+The top-line outcome is strong and very specific:
+
+- the best CNN model occurs at pilot length `Q = 12`,
+- the CNN reaches `-9.238 dB` test NMSE,
+- LS reaches `26.912 dB` test NMSE at the same pilot length,
+- the learned model therefore improves over LS by `36.150 dB`.
+
+| Pilot length `Q` | Best epoch | CNN test NMSE (dB) | LS test NMSE (dB) | CNN gain over LS (dB) |
+| --- | ---: | ---: | ---: | ---: |
+| `8` | `43` | `-9.153` | `20.281` | `29.434` |
+| `12` | `36` | `-9.238` | `26.912` | `36.150` |
+| `16` | `31` | `-9.193` | `19.765` | `28.958` |
+| `24` | `19` | `-8.637` | `13.615` | `22.253` |
+| `32` | `20` | `-8.001` | `-8.448` | `-0.447` |
+
+Technical interpretation:
+
+- For `Q < N = 32`, the LS estimator is underdetermined in the RIS domain and performs poorly.
+- The CNN stays near `-9 dB` NMSE for `Q = 8, 12, 16`, which shows that it is learning a strong structural prior over the synthetic channel family.
+- LS only becomes competitive at `Q = 32`, where the pilot budget reaches the full RIS dimension; at that point the mean gain slightly turns negative.
+
+Detailed, figure-by-figure analysis of this run is available in [RESULTS.md](RESULTS.md).
+
+![Pilot Length vs Test NMSE](data/runs/cnn_baseline/20260421-221441/pilot_length_vs_nmse.png)
+
+![Pilot Length vs CNN Gain](data/runs/cnn_baseline/20260421-221441/pilot_length_vs_gain.png)
+
+![All-Pilot SNR Comparison](data/runs/cnn_baseline/20260421-221441/pilot_length_snr_comparison.png)
+
 ## 1. What This Repository Actually Implements
 
 Implemented now:
@@ -50,6 +83,8 @@ That means the current repository is best described as:
 
 - [README.md](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/README.md)
   Project overview, math, training logic, and exact hyperparameters.
+- [RESULTS.md](RESULTS.md)
+  In-depth explanation of the stored reference experiment in `data/runs/cnn_baseline/20260421-221441`, including plots, metrics, and technical interpretation.
 - [Brif.md](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/Brif.md)
   Assignment brief and project framing notes.
 - [configs/dataset_small.yaml](/Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/configs/dataset_small.yaml)
