@@ -53,6 +53,24 @@ Detailed, figure-by-figure analysis of this run is available in [RESULTS.md](RES
 
 ![All-Pilot SNR Comparison](data/runs/cnn_baseline/20260421-221441/pilot_length_snr_comparison.png)
 
+Channel reconstruction graphs are also saved for every pilot length:
+
+- [Q = 8](data/runs/cnn_baseline/20260421-221441/pilots_8/plots/channel_examples.png)
+- [Q = 12](data/runs/cnn_baseline/20260421-221441/pilots_12/plots/channel_examples.png)
+- [Q = 16](data/runs/cnn_baseline/20260421-221441/pilots_16/plots/channel_examples.png)
+- [Q = 24](data/runs/cnn_baseline/20260421-221441/pilots_24/plots/channel_examples.png)
+- [Q = 32](data/runs/cnn_baseline/20260421-221441/pilots_32/plots/channel_examples.png)
+
+Each `channel_examples.png` compares true channel, CNN-estimated channel, and error maps. For each selected test sample, the graph shows four views: magnitude `|H|`, real part `Re(H)`, imaginary part `Im(H)`, and phase `Phase(H)`. The magnitude view is useful for channel strength, while the real, imaginary, and phase views make the BS-row and RIS-column structure easier to see.
+
+Purpose of each channel view:
+
+- `|H|`: shows the channel strength at each BS antenna and RIS element. Higher values mean stronger cascaded channel gain.
+- `Re(H)`: shows the real part of the complex channel. This is one half of the value the CNN actually predicts.
+- `Im(H)`: shows the imaginary part of the complex channel. Together, `Re(H)` and `Im(H)` fully describe the complex channel coefficient.
+- `Phase(H)`: shows the signal phase angle. This is important in RIS systems because beamforming depends strongly on phase alignment, not only signal strength.
+- Error maps: show the difference between the true channel and the CNN estimate. Smaller error means the prediction is closer to the real simulated channel.
+
 ## 1. What This Repository Actually Implements
 
 Implemented now:
@@ -926,7 +944,7 @@ Per-pilot outputs:
 - `metrics.json`: CNN and LS summaries,
 - `normalization.json`: mean/std used for normalization,
 - `predictions.npz`: saved target and predictions,
-- `plots/*.png`: report-ready figures.
+- `plots/*.png`: report-ready figures, including `channel_examples.png` for magnitude, real, imaginary, and phase channel views.
 
 Cross-pilot outputs:
 

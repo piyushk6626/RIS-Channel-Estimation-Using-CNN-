@@ -52,7 +52,7 @@ Each directory such as [`pilots_12`](data/runs/cnn_baseline/20260421-221441/pilo
 | `plots/nmse_curve.png` | Training and validation NMSE versus epoch. |
 | `plots/snr_vs_nmse.png` | CNN-versus-LS test NMSE across the SNR grid for a fixed pilot length. |
 | `plots/error_histogram.png` | Per-sample NMSE distribution comparison between CNN and LS. |
-| `plots/channel_examples.png` | Magnitude-domain examples showing true channel, predicted channel, and absolute error maps. |
+| `plots/channel_examples.png` | Channel reconstruction examples showing true channel, predicted channel, and error maps for `|H|`, `Re(H)`, `Im(H)`, and `Phase(H)`. |
 
 ## Aggregate Performance Across Pilot Length
 
@@ -126,20 +126,43 @@ For the best run:
 - training terminated after `44` epochs because early stopping patience was exhausted,
 - most of the improvement happens early, followed by a slower refinement phase.
 
-### 5. Example Channel Reconstructions (`Q = 12`)
+### 5. Example Channel Reconstructions
 
-[Open full-size figure](data/runs/cnn_baseline/20260421-221441/pilots_12/plots/channel_examples.png)
+These reconstruction graphs were generated for all pilot lengths:
+
+- [Q = 8](data/runs/cnn_baseline/20260421-221441/pilots_8/plots/channel_examples.png)
+- [Q = 12](data/runs/cnn_baseline/20260421-221441/pilots_12/plots/channel_examples.png)
+- [Q = 16](data/runs/cnn_baseline/20260421-221441/pilots_16/plots/channel_examples.png)
+- [Q = 24](data/runs/cnn_baseline/20260421-221441/pilots_24/plots/channel_examples.png)
+- [Q = 32](data/runs/cnn_baseline/20260421-221441/pilots_32/plots/channel_examples.png)
+
+The `Q = 12` graph is shown below because it is the best pilot setting in this reference run.
+
+[Open full-size Q = 12 figure](data/runs/cnn_baseline/20260421-221441/pilots_12/plots/channel_examples.png)
 
 ![Pilot 12 channel examples](data/runs/cnn_baseline/20260421-221441/pilots_12/plots/channel_examples.png)
 
 These examples are useful for understanding what the model output actually looks like:
 
-- the left column is the ground-truth cascaded channel magnitude,
-- the center column is the CNN prediction,
-- the right column is the absolute error map,
-- the per-example dB values in the titles indicate sample-level NMSE.
+- the left column is the ground-truth cascaded channel,
+- the center column is the CNN-estimated channel,
+- the right column is the error map,
+- each selected test sample is shown using four rows: `|H|`, `Re(H)`, `Im(H)`, and `Phase(H)`,
+- the dB value in the magnitude-error title is the sample-level NMSE.
 
-The prediction maps are smoother than the targets, which is consistent with a learned regularizer: the model preserves dominant spatial structure but does not reproduce every high-frequency fluctuation exactly.
+The magnitude row shows channel strength, but it can look column-wise because the synthetic mmWave channel has strong phase structure. The real, imaginary, and phase rows expose the row-wise BS-antenna variation more clearly. The prediction maps are smoother than the targets, which is consistent with a learned regularizer: the model preserves dominant spatial structure but does not reproduce every high-frequency fluctuation exactly.
+
+Purpose of each value shown in the reconstruction graph:
+
+- `|H|`: magnitude of the complex channel coefficient. It tells how strong the cascaded BS-RIS-user channel is for each antenna-element pair.
+- `Re(H)`: real component of the channel. The neural network predicts this component directly.
+- `Im(H)`: imaginary component of the channel. The neural network also predicts this component directly.
+- `Phase(H)`: angle of the complex channel coefficient. Phase is critical for RIS beamforming because RIS elements must align reflected signals constructively.
+- True column: the simulated ground-truth channel from the dataset.
+- Predicted column: the CNN output after denormalization.
+- Error column: the remaining difference between true and predicted values. In the `|H|` error title, the dB number is the sample NMSE.
+
+In short, `Re(H)` and `Im(H)` are the raw complex-channel values used for training and evaluation, `|H|` is an easier strength-only view, and `Phase(H)` explains why a plot may still have important row-wise structure even when the magnitude looks mostly column-wise.
 
 ## Technical Interpretation
 
