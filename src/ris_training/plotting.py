@@ -101,30 +101,50 @@ def plot_channel_examples(
     ranked_positions = np.linspace(0, len(sorted_indices) - 1, total_examples, dtype=int)
     selection = [int(sorted_indices[position]) for position in ranked_positions]
 
-    fig, axes = plt.subplots(total_examples, 3, figsize=(10, 3.5 * total_examples))
-    if total_examples == 1:
-        axes = np.asarray([axes])
+    panel_groups = (
+        ("|H|", np.abs, lambda true, predicted: np.abs(true - predicted)),
+        ("Re(H)", np.real, lambda true, predicted: np.real(true - predicted)),
+        ("Im(H)", np.imag, lambda true, predicted: np.imag(true - predicted)),
+        ("Phase(H)", np.angle, _phase_error),
+    )
+    rows_per_example = len(panel_groups)
+    fig, axes = plt.subplots(total_examples * rows_per_example, 3, figsize=(11, 3.0 * total_examples * rows_per_example))
+    axes = np.atleast_2d(axes)
 
-    for row, index in enumerate(selection):
-        true_magnitude = np.abs(true_channels[index])
-        predicted_magnitude = np.abs(predicted_channels[index])
-        error_magnitude = np.abs(true_channels[index] - predicted_channels[index])
-        panels = (
-            (true_magnitude, "True |H|"),
-            (predicted_magnitude, "Predicted |H|"),
-            (error_magnitude, f"Absolute Error |H| ({nmse_db[index]:.2f} dB)"),
-        )
-        for column, (panel, title) in enumerate(panels):
-            axis = axes[row, column]
-            image = axis.imshow(panel, aspect="auto", cmap="viridis")
-            axis.set_title(title)
-            axis.set_xlabel("RIS elements")
-            axis.set_ylabel("BS antennas")
-            fig.colorbar(image, ax=axis, fraction=0.046, pad=0.04)
+    for example_row, index in enumerate(selection):
+        true_channel = true_channels[index]
+        predicted_channel = predicted_channels[index]
+        for group_row, (label, transform, error_transform) in enumerate(panel_groups):
+            row = example_row * rows_per_example + group_row
+            error_label = f"Error {label}"
+            if group_row == 0:
+                error_label = f"{error_label} ({nmse_db[index]:.2f} dB)"
+            panels = (
+                (transform(true_channel), f"True {label}"),
+                (transform(predicted_channel), f"Predicted {label}"),
+                (error_transform(true_channel, predicted_channel), error_label),
+            )
+            for column, (panel, title) in enumerate(panels):
+                axis = axes[row, column]
+                image = axis.imshow(panel, aspect="auto", cmap=_component_cmap(label, column))
+                axis.set_title(title)
+                axis.set_xlabel("RIS elements")
+                axis.set_ylabel("BS antennas")
+                fig.colorbar(image, ax=axis, fraction=0.046, pad=0.04)
 
     fig.tight_layout()
     fig.savefig(destination, dpi=200)
     plt.close(fig)
+
+
+def _phase_error(true_channel: np.ndarray, predicted_channel: np.ndarray) -> np.ndarray:
+    return np.angle(np.exp(1j * (np.angle(true_channel) - np.angle(predicted_channel))))
+
+
+def _component_cmap(label: str, column: int) -> str:
+    if label == "|H|" or column == 2:
+        return "viridis"
+    return "twilight" if label == "Phase(H)" else "coolwarm"
 
 
 def plot_pilot_length_vs_nmse(summary_rows: list[dict[str, float]], destination: str | Path) -> None:
