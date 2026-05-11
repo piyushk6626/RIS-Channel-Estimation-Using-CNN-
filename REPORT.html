@@ -1,0 +1,1128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>RIS Channel Estimation Report</title>
+</head>
+<body>
+<h1 id="pilot-optimized-cnn-for-ris-assisted-mmwave-channel-estimation">Pilot-Optimized CNN for RIS-Assisted mmWave Channel Estimation</h1>
+<p><strong>A Comparative Study of Least Squares, Direct CNN, and Angular-Domain Dual CNN Estimators</strong></p>
+<hr />
+<p><em>Department of Electronics and Communication Engineering</em>
+<em>B.Tech / M.Tech Project Report — Academic Year 2025–2026</em></p>
+<hr />
+<h2 id="abstract">Abstract</h2>
+<p>Reconfigurable Intelligent Surfaces (RIS) have emerged as a transformative enabling technology for next-generation millimeter-wave (mmWave) wireless networks, offering passive beamforming gain without active radio-frequency chains. A critical challenge in deploying RIS-assisted systems is the accurate estimation of the cascaded base station–RIS–user channel from a limited number of pilot observations. Classical estimators such as Least Squares (LS) fail severely when the pilot budget is smaller than the RIS dimension, because the resulting measurement system is fundamentally rank-deficient.</p>
+<p>This report presents a complete, reproducible experimental study of three progressively sophisticated channel estimation approaches applied to a synthetically generated narrowband RIS-assisted mmWave dataset. Starting from the LS baseline, we train a compact Convolutional Neural Network (CNN) that directly regresses the full cascaded channel from noisy pilot observations, achieving up to <strong>36.15 dB improvement</strong> over LS at a pilot length of <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>12</mn></mrow></math></span>. We then propose and evaluate an angular-domain dual CNN architecture that decomposes the estimation into three learned stages: row-support estimation, column-support estimation, and residual refinement. The dual CNN reaches <strong>−9.709 dB</strong> Normalized Mean Square Error (NMSE) at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>16</mn></mrow></math></span>—surpassing both the single CNN and LS at that pilot setting.</p>
+<p>The results demonstrate that learned priors over the sparse geometric structure of mmWave channels dramatically outperform classical inversion in the pilot-limited regime. The limitations of the current synthetic dataset and single-user stationary setup motivate a future research direction using reinforcement learning for multi-user, mobile RIS channel estimation.</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#1-introduction-and-problem-statement">Introduction and Problem Statement</a></li>
+<li><a href="#2-literature-review">Literature Review</a></li>
+<li><a href="#3-system-model-and-synthetic-data-generation">System Model and Synthetic Data Generation</a></li>
+<li><a href="#4-base-paper-implementation-ls-and-single-cnn">Base Paper Implementation: LS and Single CNN</a></li>
+<li><a href="#5-limitations-of-existing-work">Limitations of Existing Work</a></li>
+<li><a href="#6-proposed-methodology-angular-domain-dual-cnn">Proposed Methodology: Angular-Domain Dual CNN</a></li>
+<li><a href="#7-results-and-comparative-analysis">Results and Comparative Analysis</a></li>
+<li><a href="#8-conclusion-and-future-scope">Conclusion and Future Scope</a></li>
+<li><a href="#9-references">References</a></li>
+</ol>
+<hr />
+<h2 id="1-introduction-and-problem-statement">1. Introduction and Problem Statement</h2>
+<h3 id="11-the-mmwave-channel-estimation-challenge">1.1 The mmWave Channel Estimation Challenge</h3>
+<p>The global demand for wireless data capacity has driven the industry toward millimeter-wave (mmWave) frequency bands, spanning roughly 30 GHz to 300 GHz. mmWave systems offer vast available spectrum—potentially tens of gigahertz of contiguous bandwidth—enabling multi-Gbps peak data rates. However, mmWave propagation is fundamentally different from sub-6 GHz: path loss scales quadratically with frequency, atmospheric absorption is significant, and penetration through building materials is poor. These characteristics make mmWave channels <strong>sparse in the angular domain</strong>: only a small number of dominant propagation paths (typically one line-of-sight plus two to four non-line-of-sight paths) carry significant energy.</p>
+<p>To compensate for high path loss, mmWave base stations and user equipment deploy large antenna arrays. Forming a directional beam at the transmitter and receiver is essential to achieve acceptable link quality. This process—beamforming—requires knowledge of the wireless channel, which must be estimated from received pilot signals. In large-array systems, the pilot overhead required to estimate the full channel can be prohibitive, consuming a significant fraction of the available time-frequency resources that would otherwise carry data.</p>
+<h3 id="12-reconfigurable-intelligent-surfaces">1.2 Reconfigurable Intelligent Surfaces</h3>
+<p>Reconfigurable Intelligent Surfaces (RIS) are planar arrays of low-cost passive reflecting elements, each capable of independently shifting the phase of an impinging electromagnetic wave. Unlike active relays or repeaters, RIS elements neither amplify nor decode signals; they simply reflect incoming energy with a programmable phase shift. By coordinating the phase shifts across all <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi></mrow></math></span> elements, the RIS can constructively superimpose its reflections at the intended receiver location, effectively creating a directed reflected beam without any transmit power at the surface.</p>
+<p>The architecture of an RIS-assisted communication system is shown below.</p>
+<pre><code>┌─────────────────────────────────────────────────────┐
+│                                                     │
+│   ┌──────┐    G (BS–RIS)     ┌──────┐              │
+│   │  BS  │ ──────────────▶   │ RIS  │              │
+│   │(M ant)│                  │(N el.)│              │
+│   └──────┘                   └──────┘              │
+│       │                          │  h_RU (RIS–UE)  │
+│       │  ~~~ (direct, disabled) ~~~                 │
+│       │                          ▼                  │
+│       │                      ┌──────┐               │
+│       └─────────────────────▶│  UE  │               │
+│                              │(1 ant)│               │
+│                              └──────┘               │
+└─────────────────────────────────────────────────────┘
+</code></pre>
+<pre><code class="language-mermaid">flowchart LR
+    BS[&quot;BS\n(M=16 antennas\n4×4 UPA)&quot;]
+    RIS[&quot;RIS\n(N=32 elements\n4×8 UPA)&quot;]
+    UE[&quot;UE\n(1 antenna\nstationary)&quot;]
+    BS --&gt;|&quot;G ∈ ℂ^(M×N)\nBS–RIS MIMO&quot;| RIS
+    RIS --&gt;|&quot;h_RU ∈ ℂ^N\nRIS–UE vector&quot;| UE
+    BS -.-&gt;|&quot;direct path\n(disabled)&quot;| UE
+</code></pre>
+<p><strong>Figure 1: RIS-assisted communication system model.</strong> The BS transmits to the UE exclusively via the RIS reflection path. The cascaded channel <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x1D407;</mi><mi>c</mi></msub><mo>&#x0003D;</mo><mi>&#x1D406;</mi><mspace width="0.167em" /><mrow><mi mathvariant="normal">d</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">g</mi></mrow><mo stretchy="false">&#x00028;</mo><msub><mi>&#x1D421;</mi><mrow><mi>R</mi><mi>U</mi></mrow></msub><mo stretchy="false">&#x00029;</mo></mrow></math></span> must be estimated.</p>
+<h3 id="13-the-cascaded-channel-estimation-problem">1.3 The Cascaded Channel Estimation Problem</h3>
+<p>When a base station (BS) with <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>M</mi></mrow></math></span> antennas communicates with a single-antenna user exclusively through an RIS with <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi></mrow></math></span> passive elements, the effective baseband channel seen at the BS receiver during uplink pilot transmission is the <strong>cascaded channel</strong>:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>&#x1D407;</mi><mi>c</mi></msub><mo>&#x0003D;</mo><mi>&#x1D406;</mi><mspace width="0.167em" /><mrow><mi mathvariant="normal">d</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">g</mi></mrow><mo stretchy="false">&#x00028;</mo><msub><mi>&#x1D421;</mi><mrow><mi>R</mi><mi>U</mi></mrow></msub><mo stretchy="false">&#x00029;</mo><mspace width="0.278em" /><mo>&#x02208;</mo><mspace width="0.278em" /><msup><mi>&#x02102;</mi><mrow><mi>M</mi><mo>&#x000D7;</mo><mi>N</mi></mrow></msup></mrow></math></div>
+<p>where <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x1D406;</mi><mo>&#x02208;</mo><msup><mi>&#x02102;</mi><mrow><mi>M</mi><mo>&#x000D7;</mo><mi>N</mi></mrow></msup></mrow></math></span> is the BS–RIS MIMO channel and <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x1D421;</mi><mrow><mi>R</mi><mi>U</mi></mrow></msub><mo>&#x02208;</mo><msup><mi>&#x02102;</mi><mi>N</mi></msup></mrow></math></span> is the RIS–UE vector channel. The system cannot observe <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x1D406;</mi></mrow></math></span> and <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x1D421;</mi><mrow><mi>R</mi><mi>U</mi></mrow></msub></mrow></math></span> separately; only their product through the RIS phase configuration is accessible. This is the <strong>cascaded channel estimation problem</strong>.</p>
+<h3 id="14-pilot-overhead-and-the-core-research-question">1.4 Pilot Overhead and the Core Research Question</h3>
+<p>To estimate <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x1D407;</mi><mi>c</mi></msub></mrow></math></span>, the user transmits a pilot signal through <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span> different RIS phase configurations (the <strong>pilot length</strong>). The received observation matrix at the BS is:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>&#x1D418;</mi><mo>&#x0003D;</mo><msub><mi>&#x1D407;</mi><mi>c</mi></msub><mspace width="0.167em" /><mrow><mi mathvariant="bold">&#x003A9;</mi></mrow><mo>&#x0002B;</mo><mi>&#x1D40D;</mi><mspace width="0.278em" /><mo>&#x02208;</mo><mspace width="0.278em" /><msup><mi>&#x02102;</mi><mrow><mi>M</mi><mo>&#x000D7;</mo><mi>Q</mi></mrow></msup></mrow></math></div>
+<p>where <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mi mathvariant="bold">&#x003A9;</mi></mrow><mo>&#x02208;</mo><msup><mi>&#x02102;</mi><mrow><mi>N</mi><mo>&#x000D7;</mo><mi>Q</mi></mrow></msup></mrow></math></span> is the RIS pilot codebook and <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x1D40D;</mi></mrow></math></span> is complex Gaussian noise.</p>
+<p>For the system to be non-underdetermined, we need at least <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x02265;</mo><mi>N</mi></mrow></math></span> pilot transmissions. For a 32-element RIS, this means <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x02265;</mo><mn>32</mn></mrow></math></span> — a substantial overhead. In practice, the pilot budget is severely constrained by the coherence time of the channel and the duplex constraint of the air interface.</p>
+<p><strong>The central research question of this project is:</strong></p>
+<blockquote>
+<p><em>Can a compact deep learning model recover the RIS-assisted cascaded channel accurately when the pilot budget <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0226A;</mo><mi>N</mi></mrow></math></span>, dramatically outperforming classical Least Squares estimation?</em></p>
+</blockquote>
+<p>The answer, demonstrated empirically across multiple experiments, is yes: at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>12</mn></mrow></math></span>, a CNN improves over LS by <strong>36.15 dB</strong>. The follow-up question is whether exploiting the known angular sparsity of mmWave channels can push performance even further with an angular-domain dual CNN.</p>
+<hr />
+<h2 id="2-literature-review">2. Literature Review</h2>
+<h3 id="21-ris-enhanced-wireless-networks">2.1 RIS-Enhanced Wireless Networks</h3>
+<p><strong>[1] Q. Wu and R. Zhang, "Intelligent Reflecting Surface Enhanced Wireless Network: Joint Active and Passive Beamforming Design," <em>IEEE Transactions on Wireless Communications</em>, vol. 18, no. 11, pp. 5394–5409, Nov. 2019.</strong></p>
+<p>Wu and Zhang established the foundational framework for jointly optimizing the BS beamforming vector and the RIS phase shifts to maximize spectral efficiency. They showed that an RIS with <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi></mrow></math></span> passive elements can increase the received SNR by a factor of <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msup><mi>N</mi><mn>2</mn></msup></mrow></math></span> when the phase shifts are perfectly aligned—a so-called "squared array gain." Their alternating optimization approach for the joint active and passive beamforming design became the standard baseline formulation. Crucially, their work assumes perfect channel state information (CSI), motivating a large body of subsequent research into how that CSI can be acquired in practice with limited overhead.</p>
+<p><strong>Key insight for this project:</strong> Perfect CSI is assumed in the beamforming literature, but acquiring it is nontrivial. This work motivates the channel estimation problem we address.</p>
+<p><strong>[2] C. Huang, A. Zappone, G. C. Alexandropoulos, M. Debbah, and C. Yuen, "Reconfigurable Intelligent Surfaces for Energy Efficiency in Wireless Communication," <em>IEEE Transactions on Wireless Communications</em>, vol. 18, no. 8, pp. 4157–4170, Aug. 2019.</strong></p>
+<p>Huang et al. studied RIS from the energy efficiency perspective, comparing RIS-assisted systems against massive MIMO and decode-and-forward relays under a total power budget. They found that under practical power constraints, a large-RIS system can achieve similar spectral efficiency to massive MIMO with significantly lower energy consumption, because the RIS elements are passive. This paper also explicitly noted the challenge of acquiring cascaded channel knowledge and proposed a compressive sensing-based pilot reduction scheme.</p>
+<p><strong>Key insight for this project:</strong> Reducing pilot overhead is not merely a convenience—it is a fundamental requirement for energy-efficient RIS deployment because long pilot sequences waste the coherence window that active data transmission requires.</p>
+<p><strong>[3] J. He, H. Wymeersch, L. Kong, O. Silvén, and M. Juntti, "Large Intelligent Surface for Positioning in Millimeter Wave MIMO Systems," in <em>Proc. IEEE Vehicular Technology Conference (VTC)</em>, Apr. 2020; and specifically for the estimation angle: J. He et al., "Deep Learning-Based Channel Estimation for RIS-Assisted mmWave Systems," <em>IEEE Wireless Communications Letters</em>, vol. 10, no. 11, pp. 2427–2431, Nov. 2021.</strong></p>
+<p>He et al. were among the first to directly apply deep learning to the RIS cascaded channel estimation problem in the mmWave regime. Their key contribution was demonstrating that a CNN trained on simulated channel samples can invert the underdetermined pilot observation system using learned geometric priors, outperforming Orthogonal Matching Pursuit (OMP) and LS by a large margin in the pilot-limited regime. They exploited the angular-domain sparsity of mmWave channels as a training-time regularizer, even without explicitly enforcing it during inference. Their results confirmed that the pilot-to-channel mapping is learnable from data, providing the direct inspiration for the work in this report.</p>
+<p><strong>Key insight for this project:</strong> A CNN acting as a learned regularizer for the underdetermined LS system is the architectural philosophy underlying both the single CNN and the angular dual CNN developed here.</p>
+<h3 id="22-classical-channel-estimation-for-ris-systems">2.2 Classical Channel Estimation for RIS Systems</h3>
+<p>Before deep learning methods became prevalent, RIS channel estimation relied on compressive sensing and sparse recovery. The dominant approaches were:</p>
+<ul>
+<li><strong>Least Squares (LS):</strong> The minimum-norm solution <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mover accent="true"><mrow><mi>&#x1D407;</mi></mrow><mo>&#x0005E;</mo></mover><mrow><mi>L</mi><mi>S</mi></mrow></msub><mo>&#x0003D;</mo><mi>&#x1D418;</mi><msup><mrow><mi mathvariant="bold">&#x003A9;</mi></mrow><mi>&#x02020;</mi></msup></mrow></math></span>, which is optimal under full-rank measurement but degrades catastrophically when <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003C;</mo><mi>N</mi></mrow></math></span>.</li>
+<li><strong>Orthogonal Matching Pursuit (OMP):</strong> A greedy pursuit algorithm that exploits angular-domain sparsity to recover the channel from fewer pilots than the RIS dimension.</li>
+<li><strong>MMSE estimation:</strong> Requires knowledge of the channel covariance matrix, which is expensive to estimate and may not be stationary across users.</li>
+</ul>
+<p>The fundamental limitation of these classical approaches is that they either fail in the underdetermined regime (LS, MMSE) or require accurate sparsity level knowledge and are computationally expensive at test time (OMP).</p>
+<h3 id="23-deep-learning-for-channel-estimation">2.3 Deep Learning for Channel Estimation</h3>
+<p>Deep learning methods have shown remarkable performance in wireless channel estimation tasks because neural networks can learn problem-specific priors from training data. In the RIS context, several architectural families have been explored:</p>
+<ul>
+<li><strong>Direct regression CNNs:</strong> Map pilot observations directly to estimated channels without any explicit signal processing step.</li>
+<li><strong>Model-based unrolling networks:</strong> Unroll the iterations of an iterative algorithm (e.g., ADMM or AMP) as neural network layers, combining the interpretability of model-based methods with the adaptability of data-driven training.</li>
+<li><strong>Angular-domain networks:</strong> Transform the channel into the angular (Fourier) domain, where mmWave channels are sparse, and learn the sparse support before reconstructing the spatial-domain channel.</li>
+<li><strong>Transformer-based estimators:</strong> Use attention mechanisms to capture long-range dependencies between antenna pairs, exploiting global spatial structure.</li>
+</ul>
+<p>This project implements direct regression CNN and angular-domain dual CNN approaches, which represent a natural evolutionary progression from classical to learned estimation.</p>
+<hr />
+<h2 id="3-system-model-and-synthetic-data-generation">3. System Model and Synthetic Data Generation</h2>
+<h3 id="31-network-geometry">3.1 Network Geometry</h3>
+<p>The simulated environment consists of three fixed-or-mobile nodes:</p>
+<table>
+<thead>
+<tr>
+<th>Node</th>
+<th>Position</th>
+<th>Configuration</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Base Station (BS)</td>
+<td><span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">&#x00028;</mo><mn>0</mn><mo>&#x0002C;</mo><mspace width="0.167em" /><mn>0</mn><mo>&#x0002C;</mo><mspace width="0.167em" /><mn>8</mn><mo stretchy="false">&#x00029;</mo></mrow></math></span> m</td>
+<td>4×4 UPA, <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>M</mi><mo>&#x0003D;</mo><mn>16</mn></mrow></math></span> antennas</td>
+</tr>
+<tr>
+<td>RIS</td>
+<td><span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">&#x00028;</mo><mn>20</mn><mo>&#x0002C;</mo><mspace width="0.167em" /><mn>0</mn><mo>&#x0002C;</mo><mspace width="0.167em" /><mn>5</mn><mo stretchy="false">&#x00029;</mo></mrow></math></span> m</td>
+<td>4×8 UPA, <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><mo>&#x0003D;</mo><mn>32</mn></mrow></math></span> elements</td>
+</tr>
+<tr>
+<td>User Equipment (UE)</td>
+<td>Random in sector</td>
+<td>Single antenna</td>
+</tr>
+</tbody>
+</table>
+<p>The UE is placed uniformly at random in a sector defined by:
+- Radius: <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>r</mi><mo>&#x02208;</mo><mo stretchy="false">[</mo><mn>5</mn><mo>&#x0002C;</mo><mn>25</mn><mo stretchy="false">]</mo></mrow></math></span> m from the RIS
+- Azimuth: <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x003C6;</mi><mo>&#x02208;</mo><mo stretchy="false">[</mo><mo>&#x02212;</mo><mn>60</mn><mi>°</mi><mo>&#x0002C;</mo><mn>60</mn><mi>°</mi><mo stretchy="false">]</mo></mrow></math></span>
+- Height: <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>z</mi><mo>&#x0003D;</mo><mn>1.5</mn></mrow></math></span> m</p>
+<p>The direct BS–UE path is intentionally disabled, so all energy reaches the UE only via the RIS reflection. This isolates the cascaded channel estimation problem cleanly.</p>
+<h3 id="32-uniform-planar-array-upa-steering-vector">3.2 Uniform Planar Array (UPA) Steering Vector</h3>
+<p>Both the BS and RIS are modeled as Uniform Planar Arrays (UPAs). For an array with <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>N</mi><mi>r</mi></msub></mrow></math></span> rows and <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>N</mi><mi>c</mi></msub></mrow></math></span> columns and half-wavelength element spacing (<span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>d</mi><mo>&#x0002F;</mo><mi>&#x003BB;</mi><mo>&#x0003D;</mo><mn>0.5</mn></mrow></math></span>), the normalized steering vector for azimuth <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x003D5;</mi></mrow></math></span> and elevation <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x003B8;</mi></mrow></math></span> is:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>&#x1D41A;</mi><mo stretchy="false">&#x00028;</mo><mi>&#x003D5;</mi><mo>&#x0002C;</mo><mi>&#x003B8;</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><mfrac><mrow><mn>1</mn></mrow><mrow><msqrt><mrow><msub><mi>N</mi><mi>r</mi></msub><msub><mi>N</mi><mi>c</mi></msub></mrow></msqrt></mrow></mfrac><mi>exp</mi><mspace width="negativethinmathspace" /><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mi>j</mi><mn>2</mn><mi>&#x003C0;</mi><mfrac><mrow><mi>d</mi></mrow><mrow><mi>&#x003BB;</mi></mrow></mfrac><mrow><mo stretchy="true" fence="true" form="prefix">[</mo><mi>r</mi><mi>sin</mi><mi>&#x003D5;</mi><mi>cos</mi><mi>&#x003B8;</mi><mo>&#x0002B;</mo><mi>c</mi><mi>sin</mi><mi>&#x003B8;</mi><mo stretchy="true" fence="true" form="postfix">]</mo></mrow><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mspace width="0.278em" /><mo>&#x02208;</mo><mspace width="0.278em" /><msup><mi>&#x02102;</mi><mrow><msub><mi>N</mi><mi>r</mi></msub><msub><mi>N</mi><mi>c</mi></msub></mrow></msup></mrow></math></div>
+<p>where <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>r</mi><mo>&#x0003D;</mo><mn>0</mn><mo>&#x0002C;</mo><mn>1</mn><mo>&#x0002C;</mo><mi>&#x02026;</mi><mo>&#x0002C;</mo><msub><mi>N</mi><mi>r</mi></msub><mo>&#x02212;</mo><mn>1</mn></mrow></math></span> and <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>c</mi><mo>&#x0003D;</mo><mn>0</mn><mo>&#x0002C;</mo><mn>1</mn><mo>&#x0002C;</mo><mi>&#x02026;</mi><mo>&#x0002C;</mo><msub><mi>N</mi><mi>c</mi></msub><mo>&#x02212;</mo><mn>1</mn></mrow></math></span> index the row and column of each element, and the expression is evaluated element-wise. The <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mn>1</mn><mo>&#x0002F;</mo><msqrt><mrow><msub><mi>N</mi><mi>r</mi></msub><msub><mi>N</mi><mi>c</mi></msub></mrow></msqrt></mrow></math></span> factor ensures unit-norm steering vectors, which simplifies the path gain normalization.</p>
+<p>In Python (from <code>src/ris_dataset/channels.py</code>):</p>
+<pre><code class="language-python">row_spatial = np.sin(azimuth) * np.cos(elevation)
+col_spatial = np.sin(elevation)
+phase = 2.0 * np.pi * spacing_lambda * (
+    row_indices * row_spatial + col_indices * col_spatial
+)
+return np.exp(1j * phase).reshape(-1) / np.sqrt(array_config.size)
+</code></pre>
+<h3 id="33-sparse-bsris-mimo-channel">3.3 Sparse BS–RIS MIMO Channel</h3>
+<p>The BS–RIS channel <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x1D406;</mi><mo>&#x02208;</mo><msup><mi>&#x02102;</mi><mrow><mi>M</mi><mo>&#x000D7;</mo><mi>N</mi></mrow></msup></mrow></math></span> is modeled as a geometric sparse MIMO channel with <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>L</mi><mrow><mi>B</mi><mi>R</mi></mrow></msub></mrow></math></span> paths:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>&#x1D406;</mi><mo>&#x0003D;</mo><munderover><mo>&#x02211;</mo><mrow><mi>&#x02113;</mi><mo>&#x0003D;</mo><mn>1</mn></mrow><mrow><msub><mi>L</mi><mrow><mi>B</mi><mi>R</mi></mrow></msub></mrow></munderover><mfrac><mrow><msub><mi>&#x003B1;</mi><mi>&#x02113;</mi></msub></mrow><mrow><msqrt><mrow><msub><mi>L</mi><mrow><mi>B</mi><mi>R</mi></mrow></msub></mrow></msqrt></mrow></mfrac><mspace width="0.278em" /><msub><mi>&#x1D41A;</mi><mrow><mi>B</mi><mi>S</mi></mrow></msub><mspace width="negativethinmathspace" /><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><msubsup><mi>&#x003D5;</mi><mi>&#x02113;</mi><mrow><mi>r</mi><mi>x</mi></mrow></msubsup><mo>&#x0002C;</mo><msubsup><mi>&#x003B8;</mi><mi>&#x02113;</mi><mrow><mi>r</mi><mi>x</mi></mrow></msubsup><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><msub><mi>&#x1D41A;</mi><mrow><mi>R</mi><mi>I</mi><mi>S</mi></mrow></msub><mspace width="negativethinmathspace" /><msup><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><msubsup><mi>&#x003D5;</mi><mi>&#x02113;</mi><mrow><mi>t</mi><mi>x</mi></mrow></msubsup><mo>&#x0002C;</mo><msubsup><mi>&#x003B8;</mi><mi>&#x02113;</mi><mrow><mi>t</mi><mi>x</mi></mrow></msubsup><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mi>H</mi></msup></mrow></math></div>
+<p>where:
+- <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003B1;</mi><mi>&#x02113;</mi></msub><mo>&#x02208;</mo><mi>&#x02102;</mi></mrow></math></span> is the complex path gain for the <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x02113;</mi></mrow></math></span>-th path
+- <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msubsup><mi>&#x003D5;</mi><mi>&#x02113;</mi><mrow><mi>r</mi><mi>x</mi></mrow></msubsup><mo>&#x0002C;</mo><msubsup><mi>&#x003B8;</mi><mi>&#x02113;</mi><mrow><mi>r</mi><mi>x</mi></mrow></msubsup></mrow></math></span> are the angles-of-arrival at the BS
+- <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msubsup><mi>&#x003D5;</mi><mi>&#x02113;</mi><mrow><mi>t</mi><mi>x</mi></mrow></msubsup><mo>&#x0002C;</mo><msubsup><mi>&#x003B8;</mi><mi>&#x02113;</mi><mrow><mi>t</mi><mi>x</mi></mrow></msubsup></mrow></math></span> are the angles-of-departure from the RIS
+- <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>L</mi><mrow><mi>B</mi><mi>R</mi></mrow></msub><mo>&#x0003D;</mo><mn>3</mn></mrow></math></span>: one LoS path and two NLoS paths</p>
+<p>The normalization by <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mn>1</mn><mo>&#x0002F;</mo><msqrt><mrow><msub><mi>L</mi><mrow><mi>B</mi><mi>R</mi></mrow></msub></mrow></msqrt></mrow></math></span> keeps the total channel energy constant regardless of path count.</p>
+<p><strong>Line-of-Sight (LoS) path:</strong> The LoS angles are derived from the actual geometry. A small angular jitter with standard deviation <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003C3;</mi><mrow><mi>j</mi><mi>i</mi><mi>t</mi><mi>t</mi><mi>e</mi><mi>r</mi></mrow></msub><mo>&#x0003D;</mo><mn>2</mn><mi>°</mi></mrow></math></span> is applied to secondary paths to model near-LoS components.</p>
+<p><strong>Non-Line-of-Sight (NLoS) paths:</strong> NLoS angles are drawn uniformly:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msup><mi>&#x003D5;</mi><mrow><mi>t</mi><mi>x</mi><mo>&#x0002F;</mo><mi>r</mi><mi>x</mi></mrow></msup><mi>&#x0007E;</mi><mi>&#x1D4B0;</mi><mspace width="negativethinmathspace" /><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mo>&#x02212;</mo><mfrac><mrow><mi>&#x003C0;</mi></mrow><mrow><mn>2</mn></mrow></mfrac><mo>&#x0002C;</mo><mfrac><mrow><mi>&#x003C0;</mi></mrow><mrow><mn>2</mn></mrow></mfrac><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo>&#x0002C;</mo><mspace width="1em" /><msup><mi>&#x003B8;</mi><mrow><mi>t</mi><mi>x</mi><mo>&#x0002F;</mo><mi>r</mi><mi>x</mi></mrow></msup><mi>&#x0007E;</mi><mi>&#x1D4B0;</mi><mspace width="negativethinmathspace" /><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mo>&#x02212;</mo><mfrac><mrow><mi>&#x003C0;</mi></mrow><mrow><mn>6</mn></mrow></mfrac><mo>&#x0002C;</mo><mfrac><mrow><mi>&#x003C0;</mi></mrow><mrow><mn>6</mn></mrow></mfrac><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow></mrow></math></div>
+<h3 id="34-sparse-risue-vector-channel">3.4 Sparse RIS–UE Vector Channel</h3>
+<p>The RIS–UE channel <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x1D421;</mi><mrow><mi>R</mi><mi>U</mi></mrow></msub><mo>&#x02208;</mo><msup><mi>&#x02102;</mi><mi>N</mi></msup></mrow></math></span> is modeled as a sparse array response vector:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>&#x1D421;</mi><mrow><mi>R</mi><mi>U</mi></mrow></msub><mo>&#x0003D;</mo><munderover><mo>&#x02211;</mo><mrow><mi>p</mi><mo>&#x0003D;</mo><mn>1</mn></mrow><mrow><msub><mi>L</mi><mrow><mi>R</mi><mi>U</mi></mrow></msub></mrow></munderover><mfrac><mrow><msub><mi>&#x003B2;</mi><mi>p</mi></msub></mrow><mrow><msqrt><mrow><msub><mi>L</mi><mrow><mi>R</mi><mi>U</mi></mrow></msub></mrow></msqrt></mrow></mfrac><mspace width="0.278em" /><msub><mi>&#x1D41A;</mi><mrow><mi>R</mi><mi>I</mi><mi>S</mi></mrow></msub><mspace width="negativethinmathspace" /><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><msub><mi>&#x003D5;</mi><mi>p</mi></msub><mo>&#x0002C;</mo><msub><mi>&#x003B8;</mi><mi>p</mi></msub><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow></mrow></math></div>
+<p>where <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>L</mi><mrow><mi>R</mi><mi>U</mi></mrow></msub><mo>&#x0003D;</mo><mn>2</mn></mrow></math></span>: one LoS and one NLoS path. The geometry of each sample determines the LoS angle from the random user position.</p>
+<h3 id="35-complex-path-gain-model">3.5 Complex Path Gain Model</h3>
+<p>Each complex path gain <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003B1;</mi><mi>&#x02113;</mi></msub></mrow></math></span> (or <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003B2;</mi><mi>p</mi></msub></mrow></math></span>) is the product of a large-scale path loss component and a small-scale fading coefficient.</p>
+<h4 id="351-close-in-path-loss-model">3.5.1 Close-In Path Loss Model</h4>
+<p>The large-scale attenuation follows the Close-In (CI) free-space reference path loss model:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mtext>PL</mtext><mo stretchy="false">&#x00028;</mo><mi>d</mi><mo stretchy="false">&#x00029;</mo><mspace width="0.278em" /><mo stretchy="false">[</mo><mtext>dB</mtext><mo stretchy="false">]</mo><mo>&#x0003D;</mo><mn>32.4</mn><mo>&#x0002B;</mo><mn>20</mn><msub><mi>log</mi><mrow><mn>10</mn></mrow></msub><mo stretchy="false">&#x00028;</mo><msub><mi>f</mi><mrow><mtext>GHz</mtext></mrow></msub><mo stretchy="false">&#x00029;</mo><mo>&#x0002B;</mo><mn>10</mn><mspace width="0.167em" /><mi>n</mi><mspace width="0.167em" /><msub><mi>log</mi><mrow><mn>10</mn></mrow></msub><mo stretchy="false">&#x00028;</mo><mi>d</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0002B;</mo><msub><mi>&#x003C7;</mi><mi>&#x003C3;</mi></msub></mrow></math></div>
+<p>where:
+- <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>f</mi><mrow><mtext>GHz</mtext></mrow></msub><mo>&#x0003D;</mo><mn>28</mn></mrow></math></span> GHz is the carrier frequency
+- <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>d</mi></mrow></math></span> is the link distance in meters
+- <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>n</mi></mrow></math></span> is the path-loss exponent (<span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>n</mi><mrow><mi>L</mi><mi>o</mi><mi>S</mi></mrow></msub><mo>&#x0003D;</mo><mn>2.1</mn></mrow></math></span>, <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>n</mi><mrow><mi>N</mi><mi>L</mi><mi>o</mi><mi>S</mi></mrow></msub><mo>&#x0003D;</mo><mn>3.4</mn></mrow></math></span>)
+- <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003C7;</mi><mi>&#x003C3;</mi></msub><mi>&#x0007E;</mi><mi>&#x1D4A9;</mi><mo stretchy="false">&#x00028;</mo><mn>0</mn><mo>&#x0002C;</mo><msup><mi>&#x003C3;</mi><mn>2</mn></msup><mo stretchy="false">&#x00029;</mo></mrow></math></span> is log-normal shadowing (<span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003C3;</mi><mrow><mi>L</mi><mi>o</mi><mi>S</mi></mrow></msub><mo>&#x0003D;</mo><mn>3.6</mn></mrow></math></span> dB, <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003C3;</mi><mrow><mi>N</mi><mi>L</mi><mi>o</mi><mi>S</mi></mrow></msub><mo>&#x0003D;</mo><mn>9.7</mn></mrow></math></span> dB)</p>
+<p>The amplitude attenuation is then:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>a</mi><mo stretchy="false">&#x00028;</mo><mi>d</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><msup><mn>10</mn><mrow><mo>&#x02212;</mo><mtext>PL</mtext><mo stretchy="false">&#x00028;</mo><mi>d</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0002F;</mo><mn>20</mn></mrow></msup></mrow></math></div>
+<h4 id="352-small-scale-fading">3.5.2 Small-Scale Fading</h4>
+<p>For LoS paths, the complex gain is:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msubsup><mi>&#x003B1;</mi><mi>&#x02113;</mi><mrow><mi>L</mi><mi>o</mi><mi>S</mi></mrow></msubsup><mo>&#x0003D;</mo><mi>a</mi><mo stretchy="false">&#x00028;</mo><mi>d</mi><mo stretchy="false">&#x00029;</mo><mspace width="0.167em" /><msqrt><mrow><msubsup><mi>&#x003C3;</mi><mrow><mi>L</mi><mi>o</mi><mi>S</mi></mrow><mn>2</mn></msubsup></mrow></msqrt><mspace width="0.167em" /><msup><mi>e</mi><mrow><mi>j</mi><msub><mi>&#x003C8;</mi><mi>&#x02113;</mi></msub></mrow></msup><mo>&#x0002C;</mo><mspace width="1em" /><msub><mi>&#x003C8;</mi><mi>&#x02113;</mi></msub><mi>&#x0007E;</mi><mi>&#x1D4B0;</mi><mo stretchy="false">&#x00028;</mo><mn>0</mn><mo>&#x0002C;</mo><mn>2</mn><mi>&#x003C0;</mi><mo stretchy="false">&#x00029;</mo></mrow></math></div>
+<p>For NLoS paths, the small-scale fading is complex Gaussian (Rayleigh):</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msubsup><mi>&#x003B1;</mi><mi>&#x02113;</mi><mrow><mi>N</mi><mi>L</mi><mi>o</mi><mi>S</mi></mrow></msubsup><mo>&#x0003D;</mo><mi>a</mi><mo stretchy="false">&#x00028;</mo><msub><mi>d</mi><mtext>eff</mtext></msub><mo stretchy="false">&#x00029;</mo><mspace width="0.167em" /><msqrt><mrow><mfrac><mrow><msubsup><mi>&#x003C3;</mi><mrow><mi>N</mi><mi>L</mi><mi>o</mi><mi>S</mi></mrow><mn>2</mn></msubsup></mrow><mrow><mn>2</mn></mrow></mfrac></mrow></msqrt><mspace width="0.167em" /><mo stretchy="false">&#x00028;</mo><msub><mi>g</mi><mi>R</mi></msub><mo>&#x0002B;</mo><mi>j</mi><msub><mi>g</mi><mi>I</mi></msub><mo stretchy="false">&#x00029;</mo><mo>&#x0002C;</mo><mspace width="1em" /><msub><mi>g</mi><mi>R</mi></msub><mo>&#x0002C;</mo><msub><mi>g</mi><mi>I</mi></msub><mi>&#x0007E;</mi><mi>&#x1D4A9;</mi><mo stretchy="false">&#x00028;</mo><mn>0</mn><mo>&#x0002C;</mo><mn>1</mn><mo stretchy="false">&#x00029;</mo></mrow></math></div>
+<p>where <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>d</mi><mtext>eff</mtext></msub><mo>&#x0003D;</mo><mi>d</mi><mo>&#x000B7;</mo><mi>&#x003BD;</mi></mrow></math></span> with <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x003BD;</mi><mi>&#x0007E;</mi><mi>&#x1D4B0;</mi><mo stretchy="false">&#x00028;</mo><mn>1.05</mn><mo>&#x0002C;</mo><mn>1.5</mn><mo stretchy="false">&#x00029;</mo></mrow></math></span> models a longer effective path for scattered NLoS components.</p>
+<p>Default gain variances: <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msubsup><mi>&#x003C3;</mi><mrow><mi>L</mi><mi>o</mi><mi>S</mi></mrow><mn>2</mn></msubsup><mo>&#x0003D;</mo><mn>1.0</mn></mrow></math></span>, <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msubsup><mi>&#x003C3;</mi><mrow><mi>N</mi><mi>L</mi><mi>o</mi><mi>S</mi></mrow><mn>2</mn></msubsup><mo>&#x0003D;</mo><mn>0.01</mn></mrow></math></span>.</p>
+<h3 id="36-cascaded-channel">3.6 Cascaded Channel</h3>
+<p>The learning target is the full cascaded BS–RIS–UE channel:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>&#x1D407;</mi><mi>c</mi></msub><mo>&#x0003D;</mo><mi>&#x1D406;</mi><mspace width="0.167em" /><mrow><mi mathvariant="normal">d</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">g</mi></mrow><mo stretchy="false">&#x00028;</mo><msub><mi>&#x1D421;</mi><mrow><mi>R</mi><mi>U</mi></mrow></msub><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><mi>&#x1D406;</mi><mo>&#x02299;</mo><msub><mrow><mn mathvariant="bold">1</mn></mrow><mi>M</mi></msub><mspace width="0.167em" /><msubsup><mi>&#x1D421;</mi><mrow><mi>R</mi><mi>U</mi></mrow><mi>T</mi></msubsup><mspace width="0.278em" /><mo>&#x02208;</mo><mspace width="0.278em" /><msup><mi>&#x02102;</mi><mrow><mi>M</mi><mo>&#x000D7;</mo><mi>N</mi></mrow></msup></mrow></math></div>
+<p>where <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo>&#x02299;</mo></mrow></math></span> denotes element-wise (Hadamard) multiplication applied column-by-column. This is equivalent to right-multiplying <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x1D406;</mi></mrow></math></span> by a diagonal matrix whose entries are the elements of <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x1D421;</mi><mrow><mi>R</mi><mi>U</mi></mrow></msub></mrow></math></span>, scaling each column of <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x1D406;</mi></mrow></math></span> by the corresponding RIS-to-UE path gain.</p>
+<p>In code:</p>
+<pre><code class="language-python">cascaded_channel = g_br * h_ru[np.newaxis, :]   # shape: (M, N)
+</code></pre>
+<h3 id="37-pilot-observation-model">3.7 Pilot Observation Model</h3>
+<p>During the uplink pilot phase, the user transmits a unit-power symbol and the RIS cycles through <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span> phase configurations encoded in the codebook matrix <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mi mathvariant="bold">&#x003A9;</mi></mrow><mo>&#x02208;</mo><msup><mi>&#x02102;</mi><mrow><mi>N</mi><mo>&#x000D7;</mo><mi>Q</mi></mrow></msup></mrow></math></span>. The received signal at the BS is:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><menclose notation="box"><mrow><mi>&#x1D418;</mi><mo>&#x0003D;</mo><msub><mi>&#x1D407;</mi><mi>c</mi></msub><mspace width="0.167em" /><mrow><mi mathvariant="bold">&#x003A9;</mi></mrow><mo>&#x0002B;</mo><mi>&#x1D40D;</mi><mspace width="0.278em" /><mo>&#x02208;</mo><mspace width="0.278em" /><msup><mi>&#x02102;</mi><mrow><mi>M</mi><mo>&#x000D7;</mo><mi>Q</mi></mrow></msup></mrow></menclose></mrow></math></div>
+<p>where <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x1D40D;</mi><mo>&#x02208;</mo><msup><mi>&#x02102;</mi><mrow><mi>M</mi><mo>&#x000D7;</mo><mi>Q</mi></mrow></msup></mrow></math></span> is additive white Gaussian noise with variance <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msubsup><mi>&#x003C3;</mi><mi>n</mi><mn>2</mn></msubsup></mrow></math></span> per complex entry (i.e., <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msubsup><mi>&#x003C3;</mi><mi>n</mi><mn>2</mn></msubsup><mo>&#x0002F;</mo><mn>2</mn></mrow></math></span> per real dimension). The downlink beamforming matrix <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x1D416;</mi></mrow></math></span> is set to the identity (<span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x1D416;</mi><mo>&#x0003D;</mo><msub><mi>&#x1D408;</mi><mi>M</mi></msub></mrow></math></span>) and the pilot symbol is fixed to 1.</p>
+<h3 id="38-per-sample-snr-control">3.8 Per-Sample SNR Control</h3>
+<p>Rather than using a fixed global noise variance, each sample draws its noise level from a target SNR:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>P</mi><mi>s</mi></msub><mo>&#x0003D;</mo><mfrac><mrow><mn>1</mn></mrow><mrow><mi>M</mi><mi>Q</mi></mrow></mfrac><msubsup><mrow><mo stretchy="true" fence="true" form="prefix">&#x02016;</mo><msub><mi>&#x1D418;</mi><mrow><mi>c</mi><mi>l</mi><mi>e</mi><mi>a</mi><mi>n</mi></mrow></msub><mo stretchy="true" fence="true" form="postfix">&#x02016;</mo></mrow><mi>F</mi><mn>2</mn></msubsup></mrow></math></div>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msubsup><mi>&#x003C3;</mi><mi>n</mi><mn>2</mn></msubsup><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>P</mi><mi>s</mi></msub></mrow><mrow><msup><mn>10</mn><mrow><msub><mtext>SNR</mtext><mrow><mi>d</mi><mi>B</mi></mrow></msub><mo>&#x0002F;</mo><mn>10</mn></mrow></msup></mrow></mfrac></mrow></math></div>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>&#x1D40D;</mi><mo>&#x0003D;</mo><mfrac><mrow><msub><mi>&#x003C3;</mi><mi>n</mi></msub></mrow><mrow><msqrt><mrow><mn>2</mn></mrow></msqrt></mrow></mfrac><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><msub><mi>&#x1D406;</mi><mi>R</mi></msub><mo>&#x0002B;</mo><mi>j</mi><msub><mi>&#x1D406;</mi><mi>I</mi></msub><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo>&#x0002C;</mo><mspace width="1em" /><msub><mi>&#x1D406;</mi><mi>R</mi></msub><mo>&#x0002C;</mo><msub><mi>&#x1D406;</mi><mi>I</mi></msub><mi>&#x0007E;</mi><mi>&#x1D4A9;</mi><mo stretchy="false">&#x00028;</mo><mrow><mn mathvariant="bold">0</mn></mrow><mo>&#x0002C;</mo><mi>&#x1D408;</mi><mo stretchy="false">&#x00029;</mo></mrow></math></div>
+<p>This ensures the SNR label exactly reflects the ratio of clean observation power to noise power for every sample individually, regardless of absolute channel amplitude variation.</p>
+<h3 id="39-ris-pilot-codebook-design">3.9 RIS Pilot Codebook Design</h3>
+<p>The RIS phase codebook <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mi mathvariant="bold">&#x003A9;</mi></mrow></mrow></math></span> is constructed deterministically from a DFT matrix to maximize coverage of the RIS angular space:</p>
+<p><strong>Case <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x02264;</mo><mi>N</mi></mrow></math></span>:</strong> Take the first <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span> columns of the normalized <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><mo>&#x000D7;</mo><mi>N</mi></mrow></math></span> DFT matrix:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mo stretchy="false">[</mo><mrow><mi mathvariant="bold">&#x003A9;</mi></mrow><msub><mo stretchy="false">]</mo><mrow><mi>n</mi><mo>&#x0002C;</mo><mi>q</mi></mrow></msub><mo>&#x0003D;</mo><mfrac><mrow><mn>1</mn></mrow><mrow><msqrt><mrow><mi>N</mi></mrow></msqrt></mrow></mfrac><mspace width="0.167em" /><msup><mi>e</mi><mrow><mi>j</mi><mn>2</mn><mi>&#x003C0;</mi><mi>n</mi><mi>q</mi><mo>&#x0002F;</mo><mi>N</mi></mrow></msup><mo>&#x0002C;</mo><mspace width="1em" /><mi>n</mi><mo>&#x0003D;</mo><mn>0</mn><mo>&#x0002C;</mo><mi>&#x02026;</mi><mo>&#x0002C;</mo><mi>N</mi><mo>&#x02212;</mo><mn>1</mn><mi>;</mi><mspace width="0.278em" /><mi>q</mi><mo>&#x0003D;</mo><mn>0</mn><mo>&#x0002C;</mo><mi>&#x02026;</mi><mo>&#x0002C;</mo><mi>Q</mi><mo>&#x02212;</mo><mn>1</mn></mrow></math></div>
+<p><strong>Case <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003E;</mo><mi>N</mi></mrow></math></span>:</strong> Take the first <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi></mrow></math></span> rows of the normalized <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x000D7;</mo><mi>Q</mi></mrow></math></span> DFT matrix.</p>
+<p>The continuous-phase DFT entries are then <strong>2-bit quantized</strong> to the nearest allowable phase:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>&#x1D4AC;</mi><mrow><mn>2</mn><mtext>-bit</mtext></mrow></msub><mo>&#x0003D;</mo><mrow><mo stretchy="true" fence="true" form="prefix">&#x0007B;</mo><mn>0</mn><mo>&#x0002C;</mo><mspace width="0.278em" /><mfrac><mrow><mi>&#x003C0;</mi></mrow><mrow><mn>2</mn></mrow></mfrac><mo>&#x0002C;</mo><mspace width="0.278em" /><mi>&#x003C0;</mi><mo>&#x0002C;</mo><mspace width="0.278em" /><mfrac><mrow><mn>3</mn><mi>&#x003C0;</mi></mrow><mrow><mn>2</mn></mrow></mfrac><mo stretchy="true" fence="true" form="postfix">&#x0007D;</mo></mrow></mrow></math></div>
+<p>This is realistic: practical RIS controllers implement discrete phase states due to hardware limitations (1-bit or 2-bit PIN diode or varactor-based phase shifters).</p>
+<h3 id="310-synthetic-dataset-generation-pipeline">3.10 Synthetic Dataset Generation Pipeline</h3>
+<p>The data generation follows this deterministic, reproducible pipeline:</p>
+<pre><code class="language-mermaid">flowchart TD
+    A[&quot;Config YAML\n(carrier_freq, arrays,\npaths, pilot_lengths, SNR grid)&quot;]
+    B[&quot;Sample Geometry\n(random UE position\nwithin sector)&quot;]
+    C[&quot;Generate BS–RIS channel G\n(sparse geometric MIMO\nLoS + NLoS paths)&quot;]
+    D[&quot;Generate RIS–UE channel h_RU\n(sparse array response\nLoS + NLoS paths)&quot;]
+    E[&quot;Form cascaded channel\nH_c = G · diag(h_RU)&quot;]
+    F[&quot;Build DFT codebook Ω\n(Q columns, 2-bit quantized)&quot;]
+    G[&quot;Compute clean obs.\nY_clean = H_c · Ω&quot;]
+    H[&quot;Sample target SNR\nfrom balanced schedule&quot;]
+    I[&quot;Add complex Gaussian noise\nY = Y_clean + N&quot;]
+    J[&quot;Save sample:\nY (obs), H_c (label), Ω, SNR, geometry&quot;]
+    K[&quot;Repeat × 10,000\nper pilot length Q&quot;]
+
+    A --&gt; B
+    B --&gt; C
+    B --&gt; D
+    C --&gt; E
+    D --&gt; E
+    E --&gt; F
+    F --&gt; G
+    H --&gt; I
+    G --&gt; I
+    I --&gt; J
+    J --&gt; K
+</code></pre>
+<p><strong>Figure 2: Synthetic dataset generation pipeline.</strong></p>
+<p>The SNR schedule is balanced: for 8000 training samples and 5 SNR values (0, 5, 10, 15, 20 dB), exactly 1600 samples fall at each SNR level, shuffled randomly. This ensures equal representation across all noise conditions.</p>
+<h3 id="311-dataset-statistics">3.11 Dataset Statistics</h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Carrier frequency</td>
+<td>28 GHz</td>
+</tr>
+<tr>
+<td>Element spacing</td>
+<td><span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mn>0.5</mn><mi>&#x003BB;</mi></mrow></math></span> (half-wavelength)</td>
+</tr>
+<tr>
+<td>BS array</td>
+<td>4×4 UPA → <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>M</mi><mo>&#x0003D;</mo><mn>16</mn></mrow></math></span> antennas</td>
+</tr>
+<tr>
+<td>RIS array</td>
+<td>4×8 UPA → <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><mo>&#x0003D;</mo><mn>32</mn></mrow></math></span> elements</td>
+</tr>
+<tr>
+<td>Pilot lengths <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span></td>
+<td>{8, 12, 16, 24, 32}</td>
+</tr>
+<tr>
+<td>SNR range</td>
+<td>{0, 5, 10, 15, 20} dB</td>
+</tr>
+<tr>
+<td>Training samples (per <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span>)</td>
+<td>8,000</td>
+</tr>
+<tr>
+<td>Validation samples (per <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span>)</td>
+<td>1,000</td>
+</tr>
+<tr>
+<td>Test samples (per <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span>)</td>
+<td>1,000</td>
+</tr>
+<tr>
+<td>Total samples across all <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span></td>
+<td>50,000</td>
+</tr>
+<tr>
+<td>BS–RIS paths <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>L</mi><mrow><mi>B</mi><mi>R</mi></mrow></msub></mrow></math></span></td>
+<td>3 (1 LoS + 2 NLoS)</td>
+</tr>
+<tr>
+<td>RIS–UE paths <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>L</mi><mrow><mi>R</mi><mi>U</mi></mrow></msub></mrow></math></span></td>
+<td>2 (1 LoS + 1 NLoS)</td>
+</tr>
+<tr>
+<td>RIS phase quantization</td>
+<td>2-bit ({0°, 90°, 180°, 270°})</td>
+</tr>
+<tr>
+<td>Dataset seed</td>
+<td>2026</td>
+</tr>
+</tbody>
+</table>
+<p>Each sample is stored as a complex-valued observation tensor of shape <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">[</mo><mi>Q</mi><mo>&#x0002C;</mo><mi>M</mi><mo stretchy="false">]</mo></mrow></math></span> (transposed from <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">[</mo><mi>M</mi><mo>&#x0002C;</mo><mi>Q</mi><mo stretchy="false">]</mo></mrow></math></span> for CNN spatial compatibility), and a complex channel label of shape <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">[</mo><mi>M</mi><mo>&#x0002C;</mo><mi>N</mi><mo stretchy="false">]</mo></mrow></math></span>. Both are serialized as real–imaginary channel pairs of shape <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">[</mo><mi>Q</mi><mo>&#x0002C;</mo><mi>M</mi><mo>&#x0002C;</mo><mn>2</mn><mo stretchy="false">]</mo></mrow></math></span> and <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">[</mo><mi>M</mi><mo>&#x0002C;</mo><mi>N</mi><mo>&#x0002C;</mo><mn>2</mn><mo stretchy="false">]</mo></mrow></math></span> respectively.</p>
+<hr />
+<h2 id="4-base-paper-implementation-ls-and-single-cnn">4. Base Paper Implementation: LS and Single CNN</h2>
+<h3 id="41-least-squares-estimator">4.1 Least Squares Estimator</h3>
+<p>The Least Squares estimator solves the linear problem <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x1D418;</mi><mo>&#x02248;</mo><msub><mi>&#x1D407;</mi><mi>c</mi></msub><mspace width="0.167em" /><mrow><mi mathvariant="bold">&#x003A9;</mi></mrow></mrow></math></span> by minimizing the Frobenius-norm residual:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mover accent="true"><mrow><mi>&#x1D407;</mi></mrow><mo>&#x0005E;</mo></mover><mrow><mi>L</mi><mi>S</mi></mrow></msub><mo>&#x0003D;</mo><mi>rg</mi><msub><mo>min</mo><mrow><mi>&#x1D407;</mi></mrow></msub><mspace width="0.278em" /><msubsup><mrow><mo stretchy="true" fence="true" form="prefix">&#x02016;</mo><mi>&#x1D418;</mi><mo>&#x02212;</mo><mi>&#x1D407;</mi><mspace width="0.167em" /><mrow><mi mathvariant="bold">&#x003A9;</mi></mrow><mo stretchy="true" fence="true" form="postfix">&#x02016;</mo></mrow><mi>F</mi><mn>2</mn></msubsup><mo>&#x0003D;</mo><mi>&#x1D418;</mi><mspace width="0.167em" /><msup><mrow><mi mathvariant="bold">&#x003A9;</mi></mrow><mi>H</mi></msup><msup><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mrow><mi mathvariant="bold">&#x003A9;</mi></mrow><mspace width="0.167em" /><msup><mrow><mi mathvariant="bold">&#x003A9;</mi></mrow><mi>H</mi></msup><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mi>&#x02020;</mi></msup></mrow></math></div>
+<p>where <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">&#x00028;</mo><mo>&#x000B7;</mo><msup><mo stretchy="false">&#x00029;</mo><mi>&#x02020;</mi></msup></mrow></math></span> denotes the Moore-Penrose pseudoinverse.</p>
+<p><strong>When <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x02265;</mo><mi>N</mi></mrow></math></span>:</strong> The matrix <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mi mathvariant="bold">&#x003A9;</mi></mrow><msup><mrow><mi mathvariant="bold">&#x003A9;</mi></mrow><mi>H</mi></msup><mo>&#x02208;</mo><msup><mi>&#x02102;</mi><mrow><mi>N</mi><mo>&#x000D7;</mo><mi>N</mi></mrow></msup></mrow></math></span> is full-rank. For a DFT codebook, <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mi mathvariant="bold">&#x003A9;</mi></mrow><msup><mrow><mi mathvariant="bold">&#x003A9;</mi></mrow><mi>H</mi></msup><mo>&#x0003D;</mo><msub><mi>&#x1D408;</mi><mi>N</mi></msub></mrow></math></span> (orthonormal columns), and the LS estimator reduces to a simple matched filter:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mover accent="true"><mrow><mi>&#x1D407;</mi></mrow><mo>&#x0005E;</mo></mover><mrow><mi>L</mi><mi>S</mi></mrow></msub><mo>&#x0003D;</mo><mi>&#x1D418;</mi><mspace width="0.167em" /><msup><mrow><mi mathvariant="bold">&#x003A9;</mi></mrow><mi>H</mi></msup><mspace width="1em" /><mo stretchy="false">&#x00028;</mo><mi>Q</mi><mo>&#x0003D;</mo><mi>N</mi><mo>&#x0002C;</mo><mtext>&#x000A0;DFT&#x000A0;codebook</mtext><mo stretchy="false">&#x00029;</mo></mrow></math></div>
+<p><strong>When <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003C;</mo><mi>N</mi></mrow></math></span>:</strong> The matrix <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mi mathvariant="bold">&#x003A9;</mi></mrow><msup><mrow><mi mathvariant="bold">&#x003A9;</mi></mrow><mi>H</mi></msup></mrow></math></span> is rank-<span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span>, and the pseudoinverse projects onto only the observed <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span>-dimensional subspace of the full <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi></mrow></math></span>-dimensional RIS space. The remaining <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><mo>&#x02212;</mo><mi>Q</mi></mrow></math></span> angular degrees of freedom are invisible to LS and appear as large reconstruction error. This is the fundamental reason LS is catastrophically poor at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003C;</mo><mi>N</mi></mrow></math></span>.</p>
+<p>In code (<code>src/ris_dataset/generator.py</code>):</p>
+<pre><code class="language-python">def least_squares_estimate(observations: np.ndarray, omega: np.ndarray) -&gt; np.ndarray:
+    return observations @ omega.conj().T @ np.linalg.pinv(omega @ omega.conj().T)
+</code></pre>
+<h3 id="42-performance-metric-nmse">4.2 Performance Metric: NMSE</h3>
+<p>The Normalized Mean Square Error (NMSE) is the standard metric for channel estimation quality:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mtext>NMSE</mtext><mo>&#x0003D;</mo><mfrac><mrow><msubsup><mrow><mo stretchy="true" fence="true" form="prefix">&#x02016;</mo><mover accent="true"><mrow><mi>&#x1D407;</mi></mrow><mo>&#x0005E;</mo></mover><mo>&#x02212;</mo><mi>&#x1D407;</mi><mo stretchy="true" fence="true" form="postfix">&#x02016;</mo></mrow><mi>F</mi><mn>2</mn></msubsup></mrow><mrow><msubsup><mrow><mo stretchy="true" fence="true" form="prefix">&#x02016;</mo><mi>&#x1D407;</mi><mo stretchy="true" fence="true" form="postfix">&#x02016;</mo></mrow><mi>F</mi><mn>2</mn></msubsup></mrow></mfrac></mrow></math></div>
+<p>In dB (lower is better):</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mtext>NMSE</mtext><mrow><mi>d</mi><mi>B</mi></mrow></msub><mo>&#x0003D;</mo><mn>10</mn><msub><mi>log</mi><mrow><mn>10</mn></mrow></msub><mspace width="negativethinmathspace" /><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mtext>NMSE</mtext><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow></mrow></math></div>
+<p>A perfect estimate gives <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mtext>NMSE</mtext><mo>&#x0003D;</mo><mn>0</mn></mrow></math></span> (<span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo>&#x02212;</mo><mo>&#x0221E;</mo></mrow></math></span> dB). An uninformative estimate (zero output) gives <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mtext>NMSE</mtext><mo>&#x0003D;</mo><mn>1</mn></mrow></math></span> (0 dB). The LS estimator at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0226A;</mo><mi>N</mi></mrow></math></span> gives NMSE well above 1, i.e., positive NMSE in dB, meaning the estimate is worse than simply outputting zero—a strong indicator of the estimation failure.</p>
+<h3 id="43-single-cnn-architecture">4.3 Single CNN Architecture</h3>
+<p>The direct CNN estimator learns a nonlinear map from noisy pilot observations to the full cascaded channel:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>f</mi><mi>&#x003B8;</mi></msub><mspace width="0.278em" /><mi>:</mi><mspace width="0.278em" /><mover><mrow><mi>&#x1D418;</mi></mrow><mo stretchy="false">&#x0007E;</mo></mover><mspace width="0.278em" /><mi>&#x027FC;</mi><mspace width="0.278em" /><msub><mover accent="true"><mrow><mover><mrow><mi>&#x1D407;</mi></mrow><mo stretchy="false">&#x0007E;</mo></mover></mrow><mo>&#x0005E;</mo></mover><mi>c</mi></msub></mrow></math></div>
+<p>where <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mover><mrow><mi>&#x1D418;</mi></mrow><mo stretchy="false">&#x0007E;</mo></mover></mrow></math></span> and <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mover accent="true"><mrow><mover><mrow><mi>&#x1D407;</mi></mrow><mo stretchy="false">&#x0007E;</mo></mover></mrow><mo>&#x0005E;</mo></mover><mi>c</mi></msub></mrow></math></span> are z-score normalized versions of the observation and channel tensors.</p>
+<h4 id="431-inputoutput-tensor-format">4.3.1 Input/Output Tensor Format</h4>
+<p>The observation tensor stored on disk has shape <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">[</mo><mi>Q</mi><mo>&#x0002C;</mo><mi>M</mi><mo>&#x0002C;</mo><mn>2</mn><mo stretchy="false">]</mo></mrow></math></span> (real-imaginary pair). Before feeding to the CNN, it is transposed to channels-first format <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">[</mo><mn>2</mn><mo>&#x0002C;</mo><mi>Q</mi><mo>&#x0002C;</mo><mi>M</mi><mo stretchy="false">]</mo></mrow></math></span>, where channel 0 is the real part and channel 1 is the imaginary part. Similarly, the channel target has shape <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">[</mo><mn>2</mn><mo>&#x0002C;</mo><mi>M</mi><mo>&#x0002C;</mo><mi>N</mi><mo stretchy="false">]</mo></mrow></math></span> in channels-first format.</p>
+<p>For the large dataset (<span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>M</mi><mo>&#x0003D;</mo><mn>16</mn></mrow></math></span>, <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><mo>&#x0003D;</mo><mn>32</mn></mrow></math></span>):
+- Input to CNN at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>16</mn></mrow></math></span>: <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">[</mo><mn>2</mn><mo>&#x0002C;</mo><mn>16</mn><mo>&#x0002C;</mo><mn>16</mn><mo stretchy="false">]</mo></mrow></math></span>
+- Target: <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">[</mo><mn>2</mn><mo>&#x0002C;</mo><mn>16</mn><mo>&#x0002C;</mo><mn>32</mn><mo stretchy="false">]</mo></mrow></math></span></p>
+<h4 id="432-normalization">4.3.2 Normalization</h4>
+<p>Training-set statistics are computed per channel (real/imaginary):</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>&#x003BC;</mi><mi>x</mi></msub><mo>&#x0003D;</mo><mfrac><mrow><mn>1</mn></mrow><mrow><mo stretchy="false">&#x0007C;</mo><msub><mi>S</mi><mrow><mi>t</mi><mi>r</mi><mi>a</mi><mi>i</mi><mi>n</mi></mrow></msub><mo stretchy="false">&#x0007C;</mo></mrow></mfrac><munder><mo>&#x02211;</mo><mrow><mi>s</mi><mo>&#x02208;</mo><msub><mi>S</mi><mrow><mi>t</mi><mi>r</mi><mi>a</mi><mi>i</mi><mi>n</mi></mrow></msub></mrow></munder><msub><mover><mrow><mi>x</mi></mrow><mo stretchy="true">&#x000AF;</mo></mover><mi>s</mi></msub><mo>&#x0002C;</mo><mspace width="1em" /><msub><mi>&#x003C3;</mi><mi>x</mi></msub><mo>&#x0003D;</mo><msqrt><mrow><mfrac><mrow><mn>1</mn></mrow><mrow><mo stretchy="false">&#x0007C;</mo><msub><mi>S</mi><mrow><mi>t</mi><mi>r</mi><mi>a</mi><mi>i</mi><mi>n</mi></mrow></msub><mo stretchy="false">&#x0007C;</mo></mrow></mfrac><msub><mo>&#x02211;</mo><mrow><mi>s</mi><mo>&#x02208;</mo><msub><mi>S</mi><mrow><mi>t</mi><mi>r</mi><mi>a</mi><mi>i</mi><mi>n</mi></mrow></msub></mrow></msub><mo stretchy="false">&#x00028;</mo><msub><mi>x</mi><mi>s</mi></msub><mo>&#x02212;</mo><msub><mi>&#x003BC;</mi><mi>x</mi></msub><msup><mo stretchy="false">&#x00029;</mo><mn>2</mn></msup></mrow></msqrt></mrow></math></div>
+<p>Standardized inputs and targets:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mover><mrow><mi>x</mi></mrow><mo stretchy="false">&#x0007E;</mo></mover><mo>&#x0003D;</mo><mfrac><mrow><mi>x</mi><mo>&#x02212;</mo><msub><mi>&#x003BC;</mi><mi>x</mi></msub></mrow><mrow><mo>max</mo><mo stretchy="false">&#x00028;</mo><msub><mi>&#x003C3;</mi><mi>x</mi></msub><mo>&#x0002C;</mo><mspace width="0.167em" /><mi>&#x003F5;</mi><mo stretchy="false">&#x00029;</mo></mrow></mfrac><mo>&#x0002C;</mo><mspace width="1em" /><mover><mrow><mi>h</mi></mrow><mo stretchy="false">&#x0007E;</mo></mover><mo>&#x0003D;</mo><mfrac><mrow><mi>h</mi><mo>&#x02212;</mo><msub><mi>&#x003BC;</mi><mi>h</mi></msub></mrow><mrow><mo>max</mo><mo stretchy="false">&#x00028;</mo><msub><mi>&#x003C3;</mi><mi>h</mi></msub><mo>&#x0002C;</mo><mspace width="0.167em" /><mi>&#x003F5;</mi><mo stretchy="false">&#x00029;</mo></mrow></mfrac></mrow></math></div>
+<p>where <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x003F5;</mi><mo>&#x0003D;</mo><msup><mn>10</mn><mrow><mo>&#x02212;</mo><mn>7</mn></mrow></msup></mrow></math></span> prevents division by zero. NMSE is always computed in the original (denormalized) channel space.</p>
+<h4 id="433-convolutional-feature-extractor">4.3.3 Convolutional Feature Extractor</h4>
+<p>The CNN uses three convolutional blocks. Each block applies:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mtext>ConvBlock</mtext><mo stretchy="false">&#x00028;</mo><mi>&#x1D431;</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><msub><mtext>Dropout</mtext><mrow><mn>2</mn><mi>D</mi></mrow></msub><mspace width="negativethinmathspace" /><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mtext>ReLU</mtext><mspace width="negativethinmathspace" /><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><msub><mtext>BatchNorm</mtext><mrow><mn>2</mn><mi>D</mi></mrow></msub><mspace width="negativethinmathspace" /><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><msub><mtext>Conv</mtext><mrow><mn>2</mn><mi>D</mi></mrow></msub><mo stretchy="false">&#x00028;</mo><mi>&#x1D431;</mi><mo stretchy="false">&#x00029;</mo><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow></mrow></math></div>
+<p>All convolutions use <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mn>3</mn><mo>&#x000D7;</mo><mn>3</mn></mrow></math></span> kernels with padding 1, so the spatial dimensions <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">&#x00028;</mo><mi>Q</mi><mo>&#x0002C;</mo><mi>M</mi><mo stretchy="false">&#x00029;</mo></mrow></math></span> are preserved through the entire feature extractor. The channel widths are:</p>
+<pre><code>Input:   [batch, 2,  Q, M]
+Conv 1:  [batch, 32, Q, M]   (32 filters, 3×3, pad=1)
+Conv 2:  [batch, 64, Q, M]   (64 filters, 3×3, pad=1)
+Conv 3:  [batch, 64, Q, M]   (64 filters, 3×3, pad=1)
+</code></pre>
+<h4 id="434-fully-connected-regression-head">4.3.4 Fully Connected Regression Head</h4>
+<p>After the convolutional stack, the feature tensor is flattened and passed through two linear layers:</p>
+<pre><code>Flatten:   [batch, 64·Q·M]
+FC hidden: [batch, 256]        (ReLU + Dropout)
+FC output: [batch, 2·M·N]
+Reshape:   [batch, 2, M, N]
+</code></pre>
+<p>The output is the predicted normalized channel.</p>
+<pre><code class="language-mermaid">flowchart TD
+    I[&quot;Input Observation\n[batch, 2, Q, M]&quot;]
+    C1[&quot;Conv Block 1\n3×3, 32 ch\n[batch, 32, Q, M]&quot;]
+    C2[&quot;Conv Block 2\n3×3, 64 ch\n[batch, 64, Q, M]&quot;]
+    C3[&quot;Conv Block 3\n3×3, 64 ch\n[batch, 64, Q, M]&quot;]
+    FL[&quot;Flatten\n[batch, 64·Q·M]&quot;]
+    FC1[&quot;FC + ReLU + Dropout\n[batch, 256]&quot;]
+    FC2[&quot;FC (linear)\n[batch, 2·M·N]&quot;]
+    O[&quot;Reshape → Channel Estimate\n[batch, 2, M, N]&quot;]
+
+    I --&gt; C1 --&gt; C2 --&gt; C3 --&gt; FL --&gt; FC1 --&gt; FC2 --&gt; O
+</code></pre>
+<p><strong>Figure 3: Single CNN architecture.</strong> Three convolutional blocks extract spatial features from the 2D pilot observation map, then a fully connected head regresses the full cascaded channel.</p>
+<h4 id="435-parameter-count">4.3.5 Parameter Count</h4>
+<p>The total number of trainable parameters depends on the pilot length <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span>:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>P</mi><mrow><mi>C</mi><mi>N</mi><mi>N</mi></mrow></msub><mo stretchy="false">&#x00028;</mo><mi>Q</mi><mo>&#x0002C;</mo><mi>M</mi><mo>&#x0002C;</mo><mi>N</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><mn>56448</mn><mo>&#x0002B;</mo><mn>16384</mn><mspace width="0.167em" /><mi>Q</mi><mspace width="0.167em" /><mi>M</mi><mo>&#x0002B;</mo><mn>514</mn><mspace width="0.167em" /><mi>M</mi><mspace width="0.167em" /><mi>N</mi></mrow></math></div>
+<p>For the large dataset (<span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>M</mi><mo>&#x0003D;</mo><mn>16</mn></mrow></math></span>, <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><mo>&#x0003D;</mo><mn>32</mn></mrow></math></span>):</p>
+<table>
+<thead>
+<tr>
+<th><span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span></th>
+<th>Parameters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>8</td>
+<td>2,421,120</td>
+</tr>
+<tr>
+<td>12</td>
+<td>3,580,352</td>
+</tr>
+<tr>
+<td>16</td>
+<td>4,739,584</td>
+</tr>
+<tr>
+<td>24</td>
+<td>7,058,048</td>
+</tr>
+<tr>
+<td>32</td>
+<td>9,376,512</td>
+</tr>
+</tbody>
+</table>
+<p>The growth is dominated by the first fully connected layer, which must accommodate the full <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mn>64</mn><mo>&#x000D7;</mo><mi>Q</mi><mo>&#x000D7;</mo><mi>M</mi></mrow></math></span> feature vector.</p>
+<h4 id="436-training-configuration">4.3.6 Training Configuration</h4>
+<table>
+<thead>
+<tr>
+<th>Hyperparameter</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Optimizer</td>
+<td>AdamW</td>
+</tr>
+<tr>
+<td>Learning rate</td>
+<td><span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msup><mn>10</mn><mrow><mo>&#x02212;</mo><mn>3</mn></mrow></msup></mrow></math></span></td>
+</tr>
+<tr>
+<td>Weight decay</td>
+<td><span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msup><mn>10</mn><mrow><mo>&#x02212;</mo><mn>4</mn></mrow></msup></mrow></math></span></td>
+</tr>
+<tr>
+<td>Batch size</td>
+<td>128</td>
+</tr>
+<tr>
+<td>Maximum epochs</td>
+<td>60</td>
+</tr>
+<tr>
+<td>Early stopping patience</td>
+<td>8 epochs</td>
+</tr>
+<tr>
+<td>Model selection metric</td>
+<td>Validation NMSE (dB)</td>
+</tr>
+<tr>
+<td>Loss function</td>
+<td>MSE on normalized channel</td>
+</tr>
+<tr>
+<td>Dropout rate</td>
+<td>0.1</td>
+</tr>
+</tbody>
+</table>
+<p>Training is conducted separately for each pilot length <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x02208;</mo><mo stretchy="false">&#x0007B;</mo><mn>8</mn><mo>&#x0002C;</mo><mn>12</mn><mo>&#x0002C;</mo><mn>16</mn><mo>&#x0002C;</mo><mn>24</mn><mo>&#x0002C;</mo><mn>32</mn><mo stretchy="false">&#x0007D;</mo><mi>$</mi><mo>&#x0002E;</mo><mi>F</mi><mi>o</mi><mi>r</mi><mi>e</mi><mi>a</mi><mi>c</mi><mi>h</mi><mi>\</mi><mo stretchy="false">&#x00028;</mo><mi>Q</mi></mrow></math></span>, the checkpoint with the lowest validation NMSE is selected as the "best" model and evaluated on the held-out test split.</p>
+<hr />
+<h2 id="5-limitations-of-existing-work">5. Limitations of Existing Work</h2>
+<h3 id="51-synthetic-only-dataset-without-real-world-sparsity">5.1 Synthetic-Only Dataset Without Real-World Sparsity</h3>
+<p>The most significant limitation of the current codebase is that <strong>all channel samples are synthetically generated</strong> from a parametric geometric model. While the model is physically motivated (UPA steering vectors, CI path loss, sparse path counts matching mmWave measurements), it does not capture the full complexity of real-world mmWave channel distributions:</p>
+<ul>
+<li><strong>Fixed path count:</strong> Every BS–RIS sample has exactly 1 LoS + 2 NLoS paths, and every RIS–UE sample has exactly 1 LoS + 1 NLoS path. Real channels exhibit variable sparsity depending on the environment.</li>
+<li><strong>Simplified environment:</strong> No blockage, diffraction, or material-specific scattering is modeled. Urban canyons, indoor walls, and vehicular reflectors all create non-stationary channel statistics that the synthetic model cannot reproduce.</li>
+<li><strong>No spatial non-stationarity:</strong> The synthetic model assumes the same path-count distribution everywhere in the coverage area. Real large-array channels exhibit spatial non-stationarity where different parts of the array see different propagation clusters.</li>
+<li><strong>Training–deployment mismatch:</strong> A CNN trained on this synthetic distribution may fail to generalize when deployed in an environment with different scattering geometry, because the learned prior is tied to the training distribution's structural assumptions.</li>
+</ul>
+<h3 id="52-single-stationary-user">5.2 Single Stationary User</h3>
+<p>The current system is explicitly scoped to <strong>one stationary user</strong>. This means:</p>
+<ul>
+<li><strong>No multi-user interference:</strong> In a real RIS-assisted network, multiple users compete for the same time-frequency-space resources, and their channels must be estimated simultaneously. The RIS phase configurations used for one user's pilot may create interference for another.</li>
+<li><strong>No Doppler effects:</strong> A stationary user produces a time-invariant channel within the coherence block. Mobile users cause time-varying channels, requiring the channel estimate to remain valid only for a very short window before re-estimation is needed.</li>
+<li><strong>No pilot contamination:</strong> In multi-user scenarios, pilot sequences assigned to different users can be non-orthogonal, causing inter-user interference during channel estimation itself.</li>
+</ul>
+<h3 id="53-architectural-scaling-problem-in-the-single-cnn">5.3 Architectural Scaling Problem in the Single CNN</h3>
+<p>The single CNN's parameter count grows as <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>O</mi><mo stretchy="false">&#x00028;</mo><mi>Q</mi><mo>&#x000B7;</mo><mi>M</mi><mo stretchy="false">&#x00029;</mo></mrow></math></span> due to the flattened fully connected head. This means:</p>
+<ul>
+<li>The model architecture is not fixed-size: a separate model must be trained for each pilot length <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span>.</li>
+<li>There is no weight sharing across pilot lengths, even though the underlying channel statistics are the same.</li>
+<li>The CNN at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>32</mn></mrow></math></span> has roughly 4× more parameters than at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>8</mn></mrow></math></span>, yet empirically performs <em>worse</em> on average (<span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo>&#x02212;</mo><mn>8.001</mn></mrow></math></span> dB vs. <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo>&#x02212;</mo><mn>9.153</mn></mrow></math></span> dB), suggesting the larger model is overparameterized relative to the information content.</li>
+</ul>
+<h3 id="54-no-explicit-exploitation-of-channel-sparsity">5.4 No Explicit Exploitation of Channel Sparsity</h3>
+<p>The single CNN learns the channel mapping implicitly. It does not explicitly:
+- Transform to the angular domain where mmWave channels are sparse
+- Enforce sparsity through regularization or structured priors
+- Separate the estimation into interpretable stages (support location vs. coefficient estimation)</p>
+<p>This limits the model's ability to extrapolate to unseen pilot lengths or angular configurations and makes the learned representation opaque to physical interpretation.</p>
+<h3 id="55-no-omp-or-compressed-sensing-baseline">5.5 No OMP or Compressed Sensing Baseline</h3>
+<p>The comparison is limited to LS as the classical baseline. Orthogonal Matching Pursuit (OMP) and other compressive sensing algorithms that exploit angular-domain sparsity are not included. OMP typically outperforms LS significantly in the pilot-limited regime, and its absence means the gain of the CNN over the <em>best classical method</em> is unknown from the current experiments.</p>
+<hr />
+<h2 id="6-proposed-methodology-angular-domain-dual-cnn">6. Proposed Methodology: Angular-Domain Dual CNN</h2>
+<h3 id="61-motivation-exploiting-angular-sparsity">6.1 Motivation: Exploiting Angular Sparsity</h3>
+<p>mmWave channels are sparse in the angular (wavenumber) domain because the number of propagation paths <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>L</mi><mo>&#x0226A;</mo><mi>M</mi><mi>N</mi></mrow></math></span>. The key physical insight is that the energy of the cascaded channel <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x1D407;</mi><mi>c</mi></msub></mrow></math></span> concentrates in a small number of angle-of-arrival / angle-of-departure bins when represented using a DFT dictionary.</p>
+<p>For the synthetic dataset in this project:
+- BS–RIS link: 3 paths → at most 3 dominant BS angular bins
+- RIS–UE link: 2 paths → at most 2 dominant RIS angular bins</p>
+<p>This sparsity suggests a structured estimation approach: first locate the dominant angular bins, then estimate the channel coefficients on those bins, and finally correct any reconstruction error with a learned residual.</p>
+<p>The proposed method evolves the estimation pipeline as follows:</p>
+<pre><code>LS: direct analytical inversion (fails for Q &lt; N)
+    ↓
+Single CNN: learned direct regression (strong, but black-box)
+    ↓
+Angular Dual CNN: angular support → sparse reconstruction → residual correction
+</code></pre>
+<h3 id="62-angular-domain-transformation">6.2 Angular-Domain Transformation</h3>
+<p>The angular-domain representation of the cascaded channel is:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>&#x1D407;</mi><mi>a</mi></msub><mo>&#x0003D;</mo><msubsup><mi>&#x1D400;</mi><mrow><mi>B</mi><mi>S</mi></mrow><mi>H</mi></msubsup><mspace width="0.167em" /><msub><mi>&#x1D407;</mi><mi>c</mi></msub><mspace width="0.167em" /><msub><mi>&#x1D400;</mi><mrow><mi>R</mi><mi>I</mi><mi>S</mi></mrow></msub><mspace width="0.278em" /><mo>&#x02208;</mo><mspace width="0.278em" /><msup><mi>&#x02102;</mi><mrow><mi>M</mi><mo>&#x000D7;</mo><mi>N</mi></mrow></msup></mrow></math></div>
+<p>where:
+- <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x1D400;</mi><mrow><mi>B</mi><mi>S</mi></mrow></msub><mo>&#x02208;</mo><msup><mi>&#x02102;</mi><mrow><mi>M</mi><mo>&#x000D7;</mo><mi>M</mi></mrow></msup></mrow></math></span> is the <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>M</mi><mo>&#x000D7;</mo><mi>M</mi></mrow></math></span> normalized DFT dictionary for the BS UPA (columns are BS steering vectors)
+- <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x1D400;</mi><mrow><mi>R</mi><mi>I</mi><mi>S</mi></mrow></msub><mo>&#x02208;</mo><msup><mi>&#x02102;</mi><mrow><mi>N</mi><mo>&#x000D7;</mo><mi>N</mi></mrow></msup></mrow></math></span> is the <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi><mo>&#x000D7;</mo><mi>N</mi></mrow></math></span> normalized DFT dictionary for the RIS UPA</p>
+<p>Since the mmWave channel has only a few paths, <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x1D407;</mi><mi>a</mi></msub></mrow></math></span> is approximately sparse: most entries are near zero, with energy concentrated in a small number of positions. The row index of each nonzero entry corresponds to a BS angular bin (angle-of-arrival), and the column index corresponds to a RIS angular bin (angle-of-departure from the RIS toward the UE).</p>
+<p>For the 4×4 BS array, the BS angular grid has 4×4 = 16 bins arranged as 4 row bins × 4 column bins. For the 4×8 RIS array, the RIS angular grid has 4×8 = 32 bins arranged as 4 row bins × 8 column bins.</p>
+<h3 id="63-three-stage-architecture">6.3 Three-Stage Architecture</h3>
+<p>The proposed angular dual CNN decomposes the estimation into three sequential learned stages:</p>
+<pre><code class="language-mermaid">flowchart LR
+    Y[&quot;Pilot Observations\nY ∈ ℂ^(M×Q)&quot;]
+    AngCorr[&quot;Angular\nCorrelation\nMatrix C&quot;]
+    RowCNN[&quot;Stage 1\nRow-Support CNN\nSupportDnCNN&quot;]
+    ColCNN[&quot;Stage 2\nColumn-Support CNN\nSupportDnCNN&quot;]
+    Sparse[&quot;Sparse Angular\nReconstruction\nĤ_sparse&quot;]
+    R[&quot;Residual\nR = H - Ĥ_sparse&quot;]
+    ResidCNN[&quot;Stage 3\nRefinement CNN\nCompactCnnEstimator&quot;]
+    Final[&quot;Final Estimate\nĤ = Ĥ_sparse + R̂_CNN&quot;]
+
+    Y --&gt; AngCorr
+    AngCorr --&gt; RowCNN
+    RowCNN --&gt; ColCNN
+    ColCNN --&gt; Sparse
+    Y --&gt; R
+    Sparse --&gt; R
+    R --&gt; ResidCNN
+    Sparse --&gt; Final
+    ResidCNN --&gt; Final
+</code></pre>
+<p><strong>Figure 4: Angular-domain dual CNN architecture.</strong> Three sequential learned stages progressively refine the channel estimate from coarse angular support to residual correction.</p>
+<h3 id="64-stage-1-row-support-cnn">6.4 Stage 1: Row-Support CNN</h3>
+<p><strong>Purpose:</strong> Identify the dominant BS angular row bins that contain most of the channel energy.</p>
+<p><strong>Angular Correlation Feature:</strong> From the pilot observations <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x1D418;</mi></mrow></math></span>, compute the angular correlation matrix:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>&#x1D402;</mi><mo>&#x0003D;</mo><msubsup><mi>&#x1D400;</mi><mrow><mi>B</mi><mi>S</mi></mrow><mi>H</mi></msubsup><mspace width="0.167em" /><mi>&#x1D418;</mi><mspace width="0.167em" /><msup><mi>&#x1D418;</mi><mi>H</mi></msup><mspace width="0.167em" /><msub><mi>&#x1D400;</mi><mrow><mi>B</mi><mi>S</mi></mrow></msub><mspace width="0.278em" /><mo>&#x02208;</mo><mspace width="0.278em" /><msup><mi>&#x02102;</mi><mrow><mi>M</mi><mo>&#x000D7;</mo><mi>M</mi></mrow></msup></mrow></math></div>
+<p>The diagonal of <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x1D402;</mi></mrow></math></span> reveals the energy in each BS angular bin after projection through the pilot codebook.</p>
+<p><strong>Input to Row-Support CNN:</strong></p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>&#x1D41F;</mi><mrow><mi>r</mi><mi>o</mi><mi>w</mi></mrow></msub><mo>&#x0003D;</mo><mi>log</mi><mspace width="negativethinmathspace" /><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mn>1</mn><mo>&#x0002B;</mo><msub><mo>&#x02211;</mo><mi>n</mi></msub><mo stretchy="false">&#x0007C;</mo><msub><mi>C</mi><mrow><mi>n</mi><mo>&#x0002C;</mo><mi>m</mi></mrow></msub><mo stretchy="false">&#x0007C;</mo><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mspace width="0.278em" /><mo>&#x02208;</mo><mspace width="0.278em" /><msup><mi>&#x0211D;</mi><mrow><msub><mi>M</mi><mi>r</mi></msub><mo>&#x000D7;</mo><msub><mi>M</mi><mi>c</mi></msub></mrow></msup></mrow></math></div>
+<p>where <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>M</mi><mi>r</mi></msub><mo>&#x0003D;</mo><mn>4</mn></mrow></math></span> and <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>M</mi><mi>c</mi></msub><mo>&#x0003D;</mo><mn>4</mn></mrow></math></span> are the BS UPA row and column dimensions, and the sum aggregates across the angular column index.</p>
+<p><strong>Target:</strong></p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>&#x1D42D;</mi><mrow><mi>r</mi><mi>o</mi><mi>w</mi></mrow></msub><mo>&#x0003D;</mo><mi>log</mi><mspace width="negativethinmathspace" /><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mn>1</mn><mo>&#x0002B;</mo><msub><mo>&#x02211;</mo><mi>n</mi></msub><mrow><mo stretchy="true" fence="true" form="prefix">&#x0007C;</mo><msub><mi>&#x1D407;</mi><mi>a</mi></msub><mo stretchy="false">&#x00028;</mo><mi>m</mi><mo>&#x0002C;</mo><mi>n</mi><mo stretchy="false">&#x00029;</mo><mo stretchy="true" fence="true" form="postfix">&#x0007C;</mo></mrow><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mspace width="0.278em" /><mo>&#x02208;</mo><mspace width="0.278em" /><msup><mi>&#x0211D;</mi><mrow><msub><mi>M</mi><mi>r</mi></msub><mo>&#x000D7;</mo><msub><mi>M</mi><mi>c</mi></msub></mrow></msup></mrow></math></div>
+<p>This is a small 4×4 support-map denoising task. The log1p transform compresses the dynamic range, making the regression problem numerically stable.</p>
+<p><strong>Architecture (SupportDnCNN):</strong> A residual denoiser with three 64-channel convolutional layers:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mover accent="true"><mrow><mi>&#x1D42D;</mi></mrow><mo>&#x0005E;</mo></mover><mo>&#x0003D;</mo><mi>&#x1D41F;</mi><mo>&#x02212;</mo><mi>&#x0211B;</mi><mo stretchy="false">&#x00028;</mo><mi>&#x1D41F;</mi><mo stretchy="false">&#x00029;</mo></mrow></math></div>
+<p>where <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x0211B;</mi></mrow></math></span> is a CNN that learns to predict the noise component in the correlation feature, and subtraction gives the denoised support estimate. This is the DnCNN residual learning architecture.</p>
+<p><strong>Row Support Selection:</strong> The top <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>k</mi><mrow><mi>r</mi><mi>o</mi><mi>w</mi></mrow></msub><mo>&#x0003D;</mo><mn>3</mn></mrow></math></span> rows (matching the 3 BS-RIS paths) with highest energy in <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mover accent="true"><mrow><mi>&#x1D42D;</mi></mrow><mo>&#x0005E;</mo></mover><mrow><mi>r</mi><mi>o</mi><mi>w</mi></mrow></msub></mrow></math></span> are selected as the estimated BS angular support set <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mover accent="true"><mrow><mi>&#x1D4AE;</mi></mrow><mo>&#x0005E;</mo></mover><mrow><mi>r</mi><mi>o</mi><mi>w</mi></mrow></msub></mrow></math></span>.</p>
+<h3 id="65-stage-2-column-support-cnn">6.5 Stage 2: Column-Support CNN</h3>
+<p><strong>Purpose:</strong> For each selected BS angular row, estimate the dominant RIS angular columns.</p>
+<p><strong>Input to Column-Support CNN:</strong> For each selected row <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>m</mi><mo>&#x02208;</mo><msub><mover accent="true"><mrow><mi>&#x1D4AE;</mi></mrow><mo>&#x0005E;</mo></mover><mrow><mi>r</mi><mi>o</mi><mi>w</mi></mrow></msub></mrow></math></span>:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msubsup><mi>&#x1D41F;</mi><mrow><mi>c</mi><mi>o</mi><mi>l</mi></mrow><mrow><mo stretchy="false">&#x00028;</mo><mi>m</mi><mo stretchy="false">&#x00029;</mo></mrow></msubsup><mo>&#x0003D;</mo><mi>log</mi><mspace width="negativethinmathspace" /><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mn>1</mn><mo>&#x0002B;</mo><mrow><mo stretchy="true" fence="true" form="prefix">&#x0007C;</mo><msub><mi>&#x1D402;</mi><mrow><mi>:</mi><mo>&#x0002C;</mo><mi>m</mi></mrow></msub><mo stretchy="true" fence="true" form="postfix">&#x0007C;</mo></mrow><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mspace width="0.278em" /><mo>&#x02208;</mo><mspace width="0.278em" /><msup><mi>&#x0211D;</mi><mrow><msub><mi>N</mi><mi>r</mi></msub><mo>&#x000D7;</mo><msub><mi>N</mi><mi>c</mi></msub></mrow></msup></mrow></math></div>
+<p>where <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>N</mi><mi>r</mi></msub><mo>&#x0003D;</mo><mn>4</mn></mrow></math></span>, <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>N</mi><mi>c</mi></msub><mo>&#x0003D;</mo><mn>8</mn></mrow></math></span> are the RIS array dimensions.</p>
+<p><strong>Target:</strong></p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msubsup><mi>&#x1D42D;</mi><mrow><mi>c</mi><mi>o</mi><mi>l</mi></mrow><mrow><mo stretchy="false">&#x00028;</mo><mi>m</mi><mo stretchy="false">&#x00029;</mo></mrow></msubsup><mo>&#x0003D;</mo><mi>log</mi><mspace width="negativethinmathspace" /><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mn>1</mn><mo>&#x0002B;</mo><mrow><mo stretchy="true" fence="true" form="prefix">&#x0007C;</mo><msub><mi>&#x1D407;</mi><mi>a</mi></msub><mo stretchy="false">&#x00028;</mo><mi>m</mi><mo>&#x0002C;</mo><mi>:</mi><mo stretchy="false">&#x00029;</mo><mo stretchy="true" fence="true" form="postfix">&#x0007C;</mo></mrow><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mspace width="0.278em" /><mo>&#x02208;</mo><mspace width="0.278em" /><msup><mi>&#x0211D;</mi><mrow><msub><mi>N</mi><mi>r</mi></msub><mo>&#x000D7;</mo><msub><mi>N</mi><mi>c</mi></msub></mrow></msup></mrow></math></div>
+<p><strong>Column Support Selection:</strong> The top <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>k</mi><mrow><mi>c</mi><mi>o</mi><mi>l</mi></mrow></msub><mo>&#x0003D;</mo><mn>2</mn></mrow></math></span> columns (matching the 2 RIS-UE paths) with highest energy in <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mover accent="true"><mrow><mi>&#x1D42D;</mi></mrow><mo>&#x0005E;</mo></mover><mrow><mi>c</mi><mi>o</mi><mi>l</mi></mrow></msub></mrow></math></span> are selected.</p>
+<h3 id="66-angular-sparse-reconstruction">6.6 Angular Sparse Reconstruction</h3>
+<p>Once both the row support <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mover accent="true"><mrow><mi>&#x1D4AE;</mi></mrow><mo>&#x0005E;</mo></mover><mrow><mi>r</mi><mi>o</mi><mi>w</mi></mrow></msub></mrow></math></span> and column support <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mover accent="true"><mrow><mi>&#x1D4AE;</mi></mrow><mo>&#x0005E;</mo></mover><mrow><mi>c</mi><mi>o</mi><mi>l</mi></mrow></msub></mrow></math></span> are estimated, the angular channel is reconstructed on the selected support:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msubsup><mover accent="true"><mrow><mi>&#x1D407;</mi></mrow><mo>&#x0005E;</mo></mover><mi>a</mi><mrow><mo stretchy="false">&#x00028;</mo><mi>m</mi><mo>&#x0002C;</mo><mi>n</mi><mo stretchy="false">&#x00029;</mo></mrow></msubsup><mo>&#x0003D;</mo><mrow><mo stretchy="true" fence="true" form="prefix">&#x0007B;</mo><mtable><mtr><mtd columnalign="left"><mtext>LS&#x000A0;coefficient&#x000A0;from&#x000A0;pilots,</mtext></mtd><mtd columnalign="left"><mo stretchy="false">&#x00028;</mo><mi>m</mi><mo>&#x0002C;</mo><mi>n</mi><mo stretchy="false">&#x00029;</mo><mo>&#x02208;</mo><msub><mover accent="true"><mrow><mi>&#x1D4AE;</mi></mrow><mo>&#x0005E;</mo></mover><mrow><mi>r</mi><mi>o</mi><mi>w</mi></mrow></msub><mo>&#x000D7;</mo><msub><mover accent="true"><mrow><mi>&#x1D4AE;</mi></mrow><mo>&#x0005E;</mo></mover><mrow><mi>c</mi><mi>o</mi><mi>l</mi></mrow></msub></mtd></mtr><mtr><mtd columnalign="left"><mn>0</mn><mo>&#x0002C;</mo></mtd><mtd columnalign="left"><mtext>otherwise</mtext></mtd></mtr></mtable></mrow></mrow></math></div>
+<p>The estimated angular channel is then transformed back to the spatial domain:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mover accent="true"><mrow><mi>&#x1D407;</mi></mrow><mo>&#x0005E;</mo></mover><mrow><mi>s</mi><mi>p</mi><mi>a</mi><mi>r</mi><mi>s</mi><mi>e</mi></mrow></msub><mo>&#x0003D;</mo><msub><mi>&#x1D400;</mi><mrow><mi>B</mi><mi>S</mi></mrow></msub><mspace width="0.167em" /><msub><mover accent="true"><mrow><mi>&#x1D407;</mi></mrow><mo>&#x0005E;</mo></mover><mi>a</mi></msub><mspace width="0.167em" /><msubsup><mi>&#x1D400;</mi><mrow><mi>R</mi><mi>I</mi><mi>S</mi></mrow><mi>H</mi></msubsup><mspace width="0.278em" /><mo>&#x02208;</mo><mspace width="0.278em" /><msup><mi>&#x02102;</mi><mrow><mi>M</mi><mo>&#x000D7;</mo><mi>N</mi></mrow></msup></mrow></math></div>
+<p>This sparse reconstruction concentrates the estimation on the most energetic angular bins, effectively acting as a learned compressive sensing recovery step guided by the data-driven support estimates.</p>
+<h3 id="67-stage-3-residual-refinement-cnn">6.7 Stage 3: Residual Refinement CNN</h3>
+<p>The sparse reconstruction <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mover accent="true"><mrow><mi>&#x1D407;</mi></mrow><mo>&#x0005E;</mo></mover><mrow><mi>s</mi><mi>p</mi><mi>a</mi><mi>r</mi><mi>s</mi><mi>e</mi></mrow></msub></mrow></math></span> captures the dominant angular components but leaves a residual:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mi>&#x1D411;</mi><mo>&#x0003D;</mo><msub><mi>&#x1D407;</mi><mi>c</mi></msub><mo>&#x02212;</mo><msub><mover accent="true"><mrow><mi>&#x1D407;</mi></mrow><mo>&#x0005E;</mo></mover><mrow><mi>s</mi><mi>p</mi><mi>a</mi><mi>r</mi><mi>s</mi><mi>e</mi></mrow></msub></mrow></math></div>
+<p>The residual contains:
+- Off-support energy due to support mislocation
+- Reconstruction error from the LS coefficient estimation on a limited pilot budget
+- Sub-dominant path components not included in the selected support</p>
+<p>A third CNN (the refinement CNN, using the same <code>CompactCnnEstimator</code> architecture as the single CNN) is trained to predict this residual:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mover accent="true"><mrow><mi>&#x1D411;</mi></mrow><mo>&#x0005E;</mo></mover><mrow><mi>C</mi><mi>N</mi><mi>N</mi></mrow></msub><mo>&#x0003D;</mo><msub><mi>f</mi><mi>&#x003B8;</mi></msub><mspace width="negativethinmathspace" /><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mover><mrow><mi>&#x1D418;</mi></mrow><mo stretchy="false">&#x0007E;</mo></mover><mo>&#x0002C;</mo><mspace width="0.167em" /><msub><mover accent="true"><mrow><mi>&#x1D407;</mi></mrow><mo>&#x0005E;</mo></mover><mrow><mi>s</mi><mi>p</mi><mi>a</mi><mi>r</mi><mi>s</mi><mi>e</mi></mrow></msub><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow></mrow></math></div>
+<p>The final channel estimate is:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><menclose notation="box"><mrow><mover accent="true"><mrow><mi>&#x1D407;</mi></mrow><mo>&#x0005E;</mo></mover><mo>&#x0003D;</mo><msub><mover accent="true"><mrow><mi>&#x1D407;</mi></mrow><mo>&#x0005E;</mo></mover><mrow><mi>s</mi><mi>p</mi><mi>a</mi><mi>r</mi><mi>s</mi><mi>e</mi></mrow></msub><mo>&#x0002B;</mo><msub><mover accent="true"><mrow><mi>&#x1D411;</mi></mrow><mo>&#x0005E;</mo></mover><mrow><mi>C</mi><mi>N</mi><mi>N</mi></mrow></msub></mrow></menclose></mrow></math></div>
+<p>This hybrid estimator combines the physical interpretability of angular sparse reconstruction with the expressive power of deep learning for residual correction.</p>
+<h3 id="68-three-stage-training-protocol">6.8 Three-Stage Training Protocol</h3>
+<p>The three stages are trained sequentially:</p>
+<ol>
+<li><strong>Train row-support CNN</strong> on angular correlation features → row energy maps.</li>
+<li><strong>Train column-support CNN</strong> on per-row correlation features → column energy maps.</li>
+<li><strong>Generate sparse predictions</strong> for the entire training set using the trained support CNNs.</li>
+<li><strong>Train refinement CNN</strong> on the residual <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x1D411;</mi><mo>&#x0003D;</mo><msub><mi>&#x1D407;</mi><mi>c</mi></msub><mo>&#x02212;</mo><msub><mover accent="true"><mrow><mi>&#x1D407;</mi></mrow><mo>&#x0005E;</mo></mover><mrow><mi>s</mi><mi>p</mi><mi>a</mi><mi>r</mi><mi>s</mi><mi>e</mi></mrow></msub></mrow></math></span> as the regression target.</li>
+</ol>
+<p>Each stage uses the same AdamW optimizer with early stopping (patience = 8 epochs) on validation NMSE.</p>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Training Target</th>
+<th>Architecture</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Row-support CNN</td>
+<td>BS angular row energy map</td>
+<td>SupportDnCNN (64 ch × 3 layers)</td>
+</tr>
+<tr>
+<td>Column-support CNN</td>
+<td>RIS angular column energy map</td>
+<td>SupportDnCNN (64 ch × 3 layers)</td>
+</tr>
+<tr>
+<td>Refinement CNN</td>
+<td>Residual channel error</td>
+<td>CompactCnnEstimator (same as single CNN)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="7-results-and-comparative-analysis">7. Results and Comparative Analysis</h2>
+<h3 id="71-experimental-setup">7.1 Experimental Setup</h3>
+<p>All results are obtained on the held-out test split (1000 samples per pilot length, never seen during training or model selection). NMSE is reported in dB (mean across all test samples). Results for each pilot length are based on the independently trained best checkpoint selected by validation NMSE.</p>
+<p><strong>Run identifiers:</strong>
+- Single CNN: <code>data/runs/cnn_baseline/20260421-221441</code>
+- Angular Dual CNN: <code>data/runs/support_cnn_baseline/20260511-095810</code></p>
+<h3 id="72-single-cnn-vs-ls-main-result">7.2 Single CNN vs. LS: Main Result</h3>
+<p>The primary comparison between the single CNN and LS demonstrates the dramatic advantage of learning in the pilot-limited regime.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">Pilot length <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span></th>
+<th style="text-align: center;">Best epoch</th>
+<th style="text-align: center;">CNN Test NMSE (dB)</th>
+<th style="text-align: center;">LS Test NMSE (dB)</th>
+<th style="text-align: center;">CNN Gain over LS (dB)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">8</td>
+<td style="text-align: center;">43</td>
+<td style="text-align: center;"><strong>−9.153</strong></td>
+<td style="text-align: center;">+20.281</td>
+<td style="text-align: center;">+29.434</td>
+</tr>
+<tr>
+<td style="text-align: center;">12</td>
+<td style="text-align: center;">36</td>
+<td style="text-align: center;"><strong>−9.238</strong></td>
+<td style="text-align: center;">+26.912</td>
+<td style="text-align: center;">+<strong>36.150</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;">16</td>
+<td style="text-align: center;">31</td>
+<td style="text-align: center;"><strong>−9.193</strong></td>
+<td style="text-align: center;">+19.765</td>
+<td style="text-align: center;">+28.958</td>
+</tr>
+<tr>
+<td style="text-align: center;">24</td>
+<td style="text-align: center;">19</td>
+<td style="text-align: center;"><strong>−8.637</strong></td>
+<td style="text-align: center;">+13.615</td>
+<td style="text-align: center;">+22.253</td>
+</tr>
+<tr>
+<td style="text-align: center;">32</td>
+<td style="text-align: center;">20</td>
+<td style="text-align: center;"><strong>−8.001</strong></td>
+<td style="text-align: center;"><strong>−8.448</strong></td>
+<td style="text-align: center;">−0.447</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Table 1: Single CNN vs. LS test NMSE across pilot lengths.</strong></p>
+<p><img alt="Single CNN Pilot Length vs Test NMSE" src="data/runs/cnn_baseline/20260421-221441/pilot_length_vs_nmse.png" /></p>
+<p><strong>Figure 5: Pilot length vs. test NMSE — Single CNN vs. LS.</strong> The CNN maintains near-constant NMSE around −9 dB regardless of pilot budget in the underdetermined regime (<span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003C;</mo><mn>32</mn></mrow></math></span>), while LS degrades catastrophically. The curves only meet at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mi>N</mi><mo>&#x0003D;</mo><mn>32</mn></mrow></math></span> where the LS system becomes fully determined.</p>
+<p><img alt="Single CNN Gain over LS" src="data/runs/cnn_baseline/20260421-221441/pilot_length_vs_gain.png" /></p>
+<p><strong>Figure 6: CNN gain over LS (dB).</strong> The peak gain of 36.15 dB occurs at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>12</mn></mrow></math></span>, the optimal pilot setting. Even at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>24</mn></mrow></math></span>, a 22.25 dB improvement demonstrates that learning is beneficial even with moderate pilot budgets.</p>
+<h4 id="key-observations">Key Observations</h4>
+<ol>
+<li>
+<p><strong>The CNN plateau:</strong> The CNN achieves −9.153 dB at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>8</mn></mrow></math></span> and −9.238 dB at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>12</mn></mrow></math></span>, a difference of only 0.085 dB. This remarkable stability across a 50% change in pilot budget indicates that the CNN has learned a strong structural prior: it does not rely on having more measurements to perform better, but rather on the correlation structure of the entire training dataset.</p>
+</li>
+<li>
+<p><strong>LS is structurally limited:</strong> For <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003C;</mo><mi>N</mi></mrow></math></span>, LS produces positive NMSE in dB (i.e., the estimate is worse than zero), because the rank-deficient pseudoinverse cannot reconstruct the full <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi></mrow></math></span>-dimensional channel from a <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span>-dimensional observation. Increasing SNR does not help LS in this regime.</p>
+</li>
+<li>
+<p><strong>Crossover at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>32</mn></mrow></math></span>:</strong> At full pilot length (<span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mi>N</mi><mo>&#x0003D;</mo><mn>32</mn></mrow></math></span>), LS achieves −8.448 dB while the CNN achieves −8.001 dB. The average advantage slightly reverses because the LS system is now fully determined and benefits directly from lower noise.</p>
+</li>
+</ol>
+<h3 id="73-snr-wise-analysis-single-cnn-q-12-best-pilot-length">7.3 SNR-Wise Analysis: Single CNN (Q = 12, Best Pilot Length)</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">SNR (dB)</th>
+<th style="text-align: center;">CNN Test NMSE (dB)</th>
+<th style="text-align: center;">LS Test NMSE (dB)</th>
+<th style="text-align: center;">CNN Gain over LS (dB)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">0</td>
+<td style="text-align: center;">−6.930</td>
+<td style="text-align: center;">+29.129</td>
+<td style="text-align: center;">+36.059</td>
+</tr>
+<tr>
+<td style="text-align: center;">5</td>
+<td style="text-align: center;">−8.809</td>
+<td style="text-align: center;">+27.249</td>
+<td style="text-align: center;">+36.058</td>
+</tr>
+<tr>
+<td style="text-align: center;">10</td>
+<td style="text-align: center;">−9.950</td>
+<td style="text-align: center;">+26.177</td>
+<td style="text-align: center;">+36.128</td>
+</tr>
+<tr>
+<td style="text-align: center;">15</td>
+<td style="text-align: center;">−10.324</td>
+<td style="text-align: center;">+26.132</td>
+<td style="text-align: center;">+36.456</td>
+</tr>
+<tr>
+<td style="text-align: center;">20</td>
+<td style="text-align: center;">−10.175</td>
+<td style="text-align: center;">+25.874</td>
+<td style="text-align: center;">+36.049</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Table 2: SNR-wise NMSE comparison at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>12</mn></mrow></math></span>.</strong></p>
+<p>The CNN gain over LS is <strong>nearly perfectly flat</strong> across the entire SNR range (≈36 dB). This is a key signature: increasing SNR improves the CNN slightly (from −6.93 dB to −10.32 dB over a 15 dB SNR range), but the LS denominator stays almost unchanged because the measurement-rank problem is the dominant bottleneck, not noise. Adding SNR to an underdetermined system is like reducing noise in a dark room while keeping the camera lens cap on—you cannot observe what is not in your subspace.</p>
+<h3 id="74-snr-wise-analysis-single-cnn-at-q-32-full-pilot">7.4 SNR-Wise Analysis: Single CNN at Q = 32 (Full Pilot)</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">SNR (dB)</th>
+<th style="text-align: center;">CNN Test NMSE (dB)</th>
+<th style="text-align: center;">LS Test NMSE (dB)</th>
+<th style="text-align: center;">CNN Gain over LS (dB)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">0</td>
+<td style="text-align: center;">−7.483</td>
+<td style="text-align: center;">+1.608</td>
+<td style="text-align: center;">+9.092</td>
+</tr>
+<tr>
+<td style="text-align: center;">5</td>
+<td style="text-align: center;">−8.014</td>
+<td style="text-align: center;">−3.434</td>
+<td style="text-align: center;">+4.580</td>
+</tr>
+<tr>
+<td style="text-align: center;">10</td>
+<td style="text-align: center;">−8.201</td>
+<td style="text-align: center;">−8.489</td>
+<td style="text-align: center;">−0.289</td>
+</tr>
+<tr>
+<td style="text-align: center;">15</td>
+<td style="text-align: center;">−8.172</td>
+<td style="text-align: center;">−13.464</td>
+<td style="text-align: center;">−5.292</td>
+</tr>
+<tr>
+<td style="text-align: center;">20</td>
+<td style="text-align: center;">−8.135</td>
+<td style="text-align: center;">−18.461</td>
+<td style="text-align: center;">−10.326</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Table 3: SNR-wise NMSE at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>32</mn></mrow></math></span> — transition regime.</strong></p>
+<p>At <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>32</mn></mrow></math></span>, the CNN and LS cross at approximately 10 dB SNR. Below 10 dB, the CNN still acts as a denoiser and wins. Above 10 dB, LS benefits strongly from the improved SNR because the system is now fully determined and noise is the only remaining bottleneck. The CNN, conversely, has a model bias (it predicts a smooth channel consistent with its training distribution) that becomes the limiting error at high SNR.</p>
+<p><img alt="All-Pilot SNR Comparison" src="data/runs/cnn_baseline/20260421-221441/pilot_length_snr_comparison.png" /></p>
+<p><strong>Figure 7: CNN test NMSE vs. SNR for all pilot lengths (left) and CNN gain over LS vs. SNR (right).</strong> At <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>12</mn></mrow></math></span>, the gain is flat across all SNR levels. At <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>32</mn></mrow></math></span>, the gain transitions from positive to negative as SNR increases.</p>
+<h3 id="75-channel-reconstruction-examples-single-cnn">7.5 Channel Reconstruction Examples: Single CNN</h3>
+<p>The following figure shows three representative test samples from the <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>12</mn></mrow></math></span> experiment, illustrating the quality of channel reconstruction.</p>
+<p><img alt="Channel Examples Q=12" src="data/runs/cnn_baseline/20260421-221441/pilots_12/plots/channel_examples.png" /></p>
+<p><strong>Figure 8: True vs. predicted channel at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>12</mn></mrow></math></span> (Single CNN).</strong> Each row set shows <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">&#x0007C;</mo><mi>&#x1D407;</mi><mo stretchy="false">&#x0007C;</mo></mrow></math></span>, <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mtext>Re</mtext><mo stretchy="false">&#x00028;</mo><mi>&#x1D407;</mi><mo stretchy="false">&#x00029;</mo></mrow></math></span>, <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mtext>Im</mtext><mo stretchy="false">&#x00028;</mo><mi>&#x1D407;</mi><mo stretchy="false">&#x00029;</mo></mrow></math></span>, and <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mtext>Phase</mtext><mo stretchy="false">&#x00028;</mo><mi>&#x1D407;</mi><mo stretchy="false">&#x00029;</mo></mrow></math></span> for: ground truth (left), CNN prediction (middle), and error map (right). The dB value in the magnitude error title is the per-sample NMSE.</p>
+<p><strong>How to read the channel plots:</strong>
+- <strong><span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">&#x0007C;</mo><mi>&#x1D407;</mi><mo stretchy="false">&#x0007C;</mo></mrow></math></span> (Magnitude):</strong> Channel strength at each (BS antenna, RIS element) pair. Bright/high-value entries represent strong propagation paths.
+- <strong><span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mtext>Re</mtext><mo stretchy="false">&#x00028;</mo><mi>&#x1D407;</mi><mo stretchy="false">&#x00029;</mo></mrow></math></span> and <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mtext>Im</mtext><mo stretchy="false">&#x00028;</mo><mi>&#x1D407;</mi><mo stretchy="false">&#x00029;</mo></mrow></math></span>:</strong> The real and imaginary components that the CNN directly predicts.
+- <strong><span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mtext>Phase</mtext><mo stretchy="false">&#x00028;</mo><mi>&#x1D407;</mi><mo stretchy="false">&#x00029;</mo></mrow></math></span>:</strong> The complex argument <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo>&#x02220;</mo><msub><mi>H</mi><mrow><mi>m</mi><mo>&#x0002C;</mo><mi>n</mi></mrow></msub></mrow></math></span>. Critical for RIS beamforming: the RIS must align its reflected phases to constructively superimpose signals at the user.
+- <strong>Error map:</strong> Residual difference. Small error maps (low contrast) indicate high-fidelity reconstruction.</p>
+<h3 id="76-three-method-comparison-ls-vs-single-cnn-vs-angular-dual-cnn">7.6 Three-Method Comparison: LS vs. Single CNN vs. Angular Dual CNN</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">Pilot <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span></th>
+<th style="text-align: center;">LS NMSE (dB)</th>
+<th style="text-align: center;">Single CNN (dB)</th>
+<th style="text-align: center;">Angular Dual CNN (dB)</th>
+<th style="text-align: center;">Best Method</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">8</td>
+<td style="text-align: center;">+20.281</td>
+<td style="text-align: center;"><strong>−9.153</strong></td>
+<td style="text-align: center;">−5.458</td>
+<td style="text-align: center;">Single CNN</td>
+</tr>
+<tr>
+<td style="text-align: center;">12</td>
+<td style="text-align: center;">+26.912</td>
+<td style="text-align: center;"><strong>−9.238</strong></td>
+<td style="text-align: center;">−8.394</td>
+<td style="text-align: center;">Single CNN</td>
+</tr>
+<tr>
+<td style="text-align: center;">16</td>
+<td style="text-align: center;">+19.765</td>
+<td style="text-align: center;">−9.193</td>
+<td style="text-align: center;"><strong>−9.709</strong></td>
+<td style="text-align: center;">Angular Dual CNN</td>
+</tr>
+<tr>
+<td style="text-align: center;">24</td>
+<td style="text-align: center;">+13.615</td>
+<td style="text-align: center;"><strong>−8.637</strong></td>
+<td style="text-align: center;">−6.233</td>
+<td style="text-align: center;">Single CNN</td>
+</tr>
+<tr>
+<td style="text-align: center;">32</td>
+<td style="text-align: center;"><strong>−8.448</strong></td>
+<td style="text-align: center;">−8.001</td>
+<td style="text-align: center;">−8.230</td>
+<td style="text-align: center;">LS</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Table 4: Three-method comparison across all pilot lengths.</strong></p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th style="text-align: center;">Best <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span></th>
+<th style="text-align: center;">Best NMSE (dB)</th>
+<th style="text-align: center;">Gain over LS at same <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span> (dB)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Least Squares</td>
+<td style="text-align: center;">32</td>
+<td style="text-align: center;">−8.448</td>
+<td style="text-align: center;">0.000 (reference)</td>
+</tr>
+<tr>
+<td>Single CNN</td>
+<td style="text-align: center;">12</td>
+<td style="text-align: center;">−9.238</td>
+<td style="text-align: center;">+36.150</td>
+</tr>
+<tr>
+<td>Angular Dual CNN</td>
+<td style="text-align: center;">16</td>
+<td style="text-align: center;">−9.709</td>
+<td style="text-align: center;">+29.473</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Table 5: Best-case results for each method.</strong></p>
+<p><img alt="Angular Dual CNN Pilot vs NMSE" src="data/runs/support_cnn_baseline/20260511-095810/pilot_length_vs_nmse.png" /></p>
+<p><strong>Figure 9: Three-method NMSE comparison — Angular Dual CNN run.</strong> The dual CNN (orange) outperforms LS everywhere in the underdetermined regime but shows more variability with pilot length than the single CNN (blue).</p>
+<h3 id="77-angular-dual-cnn-snr-wise-analysis-at-q-16-best-pilot-length">7.7 Angular Dual CNN: SNR-Wise Analysis at Q = 16 (Best Pilot Length)</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">SNR (dB)</th>
+<th style="text-align: center;">Angular Dual CNN (dB)</th>
+<th style="text-align: center;">Single CNN at Q=16 (dB)</th>
+<th style="text-align: center;">LS (dB)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">0</td>
+<td style="text-align: center;">−7.250</td>
+<td style="text-align: center;">−7.558</td>
+<td style="text-align: center;">+21.778</td>
+</tr>
+<tr>
+<td style="text-align: center;">5</td>
+<td style="text-align: center;">−9.644</td>
+<td style="text-align: center;">−8.951</td>
+<td style="text-align: center;">+19.963</td>
+</tr>
+<tr>
+<td style="text-align: center;">10</td>
+<td style="text-align: center;">−10.293</td>
+<td style="text-align: center;">−9.892</td>
+<td style="text-align: center;">+19.296</td>
+</tr>
+<tr>
+<td style="text-align: center;">15</td>
+<td style="text-align: center;">−10.691</td>
+<td style="text-align: center;">−9.882</td>
+<td style="text-align: center;">+18.939</td>
+</tr>
+<tr>
+<td style="text-align: center;">20</td>
+<td style="text-align: center;">−10.666</td>
+<td style="text-align: center;">−9.685</td>
+<td style="text-align: center;">+18.848</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Table 6: SNR-wise comparison at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>16</mn></mrow></math></span>.</strong></p>
+<p>The angular dual CNN slightly underperforms the single CNN at 0 dB SNR but consistently outperforms it at 5 dB and above. The angular approach gains more from improved SNR because the correlation-feature-based support estimation becomes more reliable at higher SNR, enabling more accurate support selection and therefore better sparse reconstruction.</p>
+<h3 id="78-angular-dual-cnn-stage-level-training-summary">7.8 Angular Dual CNN: Stage-Level Training Summary</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;"><span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span></th>
+<th style="text-align: center;">Best Row Epoch</th>
+<th style="text-align: center;">Best Col Epoch</th>
+<th style="text-align: center;">Best Refinement Epoch</th>
+<th style="text-align: center;">Total Epochs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">8</td>
+<td style="text-align: center;">13</td>
+<td style="text-align: center;">15</td>
+<td style="text-align: center;">45</td>
+<td style="text-align: center;">53</td>
+</tr>
+<tr>
+<td style="text-align: center;">12</td>
+<td style="text-align: center;">11</td>
+<td style="text-align: center;">20</td>
+<td style="text-align: center;">48</td>
+<td style="text-align: center;">56</td>
+</tr>
+<tr>
+<td style="text-align: center;">16</td>
+<td style="text-align: center;">15</td>
+<td style="text-align: center;">10</td>
+<td style="text-align: center;">28</td>
+<td style="text-align: center;">36</td>
+</tr>
+<tr>
+<td style="text-align: center;">24</td>
+<td style="text-align: center;">1</td>
+<td style="text-align: center;">35</td>
+<td style="text-align: center;">43</td>
+<td style="text-align: center;">51</td>
+</tr>
+<tr>
+<td style="text-align: center;">32</td>
+<td style="text-align: center;">19</td>
+<td style="text-align: center;">20</td>
+<td style="text-align: center;">21</td>
+<td style="text-align: center;">29</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Table 7: Stage-level training convergence.</strong> Support CNNs converge in 10–20 epochs. The refinement CNN takes longer (20–50 epochs) because it is fitting a more complex, full-channel residual.</p>
+<h3 id="79-channel-reconstruction-examples-angular-dual-cnn">7.9 Channel Reconstruction Examples: Angular Dual CNN</h3>
+<p><img src="file:///Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/data/runs/support_cnn_baseline/20260511-095810/pilots_16/plots/channel_examples.png" alt="Angular Dual CNN Channel Examples Q=16" width="70%"></p>
+<p><strong>Figure 10: True vs. predicted channel at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>16</mn></mrow></math></span> (Angular Dual CNN).</strong> Compared to the single CNN at the same pilot length, the dual CNN prediction captures finer spatial structure due to the angular decomposition followed by residual correction.</p>
+<h3 id="710-refinement-cnn-training-curve">7.10 Refinement CNN Training Curve</h3>
+<p><img alt="Refinement NMSE Curve Q=16" src="data/runs/support_cnn_baseline/20260511-095810/pilots_16/plots/refinement_nmse_curve.png" /></p>
+<p><strong>Figure 11: Refinement CNN training and validation NMSE at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>16</mn></mrow></math></span>.</strong> The best checkpoint is selected at epoch 28. The validation curve (orange) closely tracks the training curve (blue), indicating the refinement CNN generalizes well without overfitting to the residual prediction task.</p>
+<p><img alt="Angular SNR Comparison" src="data/runs/support_cnn_baseline/20260511-095810/pilot_length_snr_comparison.png" /></p>
+<p><strong>Figure 12: Angular Dual CNN — CNN test NMSE vs. SNR for all pilot lengths (left) and CNN gain over LS vs. SNR (right).</strong></p>
+<h3 id="711-analysis-why-the-single-cnn-still-wins-at-q-8-and-q-12">7.11 Analysis: Why the Single CNN Still Wins at Q = 8 and Q = 12</h3>
+<p>The angular dual CNN underperforms the single CNN at very short pilot lengths (<span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>8</mn><mo>&#x0002C;</mo><mn>12</mn></mrow></math></span>). The likely reason is that the angular correlation features used for support estimation become unreliable at very low <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span>:</p>
+<ul>
+<li>The measurement operator <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mrow><mi mathvariant="bold">&#x003A9;</mi></mrow></mrow></math></span> at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>8</mn></mrow></math></span> spans only 8 of the 32 RIS angular dimensions.</li>
+<li>The projection of the channel through this limited codebook smears angular energy across the correlation matrix.</li>
+<li>The support CNNs are trained on these smeared features, causing support mislocation.</li>
+<li>A mislocated support leads to a poor sparse reconstruction, which increases the burden on the refinement CNN.</li>
+</ul>
+<p>The single CNN, operating as a pure black-box regressor, implicitly avoids these support estimation errors by learning a direct, unstructured map. At <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>16</mn></mrow></math></span>, the pilot budget is large enough that the correlation features become reliably informative, and the angular dual CNN overtakes the single CNN.</p>
+<h3 id="712-summary-of-results">7.12 Summary of Results</h3>
+<pre><code>     NMSE (dB), lower is better
+       -12 -10  -8   -6   -4   -2    0   +10  +20  +30
+Q= 8:  CNN ●────────────────────|                  |
+       ANG          ●───────────|                  |
+       LS                       |    ○─────────────●
+
+Q=12:  CNN ●────────────────────|                  |
+       ANG     ●────────────────|                  |
+       LS                       |          ○───────●
+
+Q=16:  CNN ●────────────────────|                  |
+       ANG ●────────────────────|                  |
+       LS                       |    ○─────────────●
+
+Q=24:  CNN  ●───────────────────|                  |
+       ANG          ●───────────|                  |
+       LS                       | ○────────────────●
+
+Q=32:  CNN  ●───────────────────|                  |
+       ANG  ●───────────────────|                  |
+       LS  ●────────────────────|
+</code></pre>
+<p>At the optimal operating point:
+- <strong>LS (Q=32): −8.448 dB</strong> — requires all 32 pilots to be competitive
+- <strong>Single CNN (Q=12): −9.238 dB</strong> — achieves best performance with only 12 pilots
+- <strong>Angular Dual CNN (Q=16): −9.709 dB</strong> — achieves the best absolute NMSE among learned methods</p>
+<hr />
+<h2 id="8-conclusion-and-future-scope">8. Conclusion and Future Scope</h2>
+<h3 id="81-conclusion">8.1 Conclusion</h3>
+<p>This project presents a comprehensive experimental study of RIS-assisted mmWave channel estimation, progressing from the classical Least Squares estimator through a direct single CNN to a structured angular-domain dual CNN with residual refinement.</p>
+<p>The key findings are:</p>
+<ol>
+<li>
+<p><strong>LS is fundamentally limited in the pilot-sparse regime.</strong> When <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003C;</mo><mi>N</mi></mrow></math></span>, the measurement system is rank-deficient and LS produces reconstruction errors well above 0 dB NMSE (i.e., the estimate is worse than zero). Increasing SNR cannot overcome this structural limitation.</p>
+</li>
+<li>
+<p><strong>A compact CNN dramatically outperforms LS.</strong> By learning an implicit prior over the training channel distribution, the single CNN achieves near-constant −9 dB NMSE across pilot lengths <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x02208;</mo><mo stretchy="false">&#x0007B;</mo><mn>8</mn><mo>&#x0002C;</mo><mn>12</mn><mo>&#x0002C;</mo><mn>16</mn><mo stretchy="false">&#x0007D;</mo></mrow></math></span>, improving over LS by up to <strong>36.15 dB</strong> at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>12</mn></mrow></math></span>. The best CNN operates at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>12</mn></mrow></math></span> — not <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>32</mn></mrow></math></span> — demonstrating that more pilots do not always mean better learned estimation.</p>
+</li>
+<li>
+<p><strong>Exploiting angular sparsity further improves performance.</strong> The angular dual CNN introduces physical structure into the estimation pipeline: angular support localization followed by sparse reconstruction and residual correction. At <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>16</mn></mrow></math></span>, this achieves <strong>−9.709 dB</strong>, the best absolute NMSE among all methods in this study, representing a 29.47 dB improvement over LS at the same pilot budget.</p>
+</li>
+<li>
+<p><strong>A hybrid model-learning approach is promising.</strong> The dual CNN demonstrates that combining physically motivated signal processing (angular transform, sparse reconstruction) with data-driven residual correction achieves better performance than either approach alone at moderate pilot budgets.</p>
+</li>
+<li>
+<p><strong>The crossover behavior at Q = 32 is theoretically important.</strong> When the pilot budget equals the RIS dimension, LS becomes informative and increasingly outperforms the CNN at high SNR. This shows that the learned prior creates a model bias that limits performance when data alone is sufficient for classical inversion.</p>
+</li>
+</ol>
+<h3 id="82-limitations-of-current-work">8.2 Limitations of Current Work</h3>
+<ul>
+<li>Synthetic dataset only; no real-world measurement campaigns</li>
+<li>Single stationary user; no mobility, no multi-user scheduling</li>
+<li>No OMP or other sparsity-exploiting classical baselines for comparison</li>
+<li>No wideband/OFDM extension; narrowband model only</li>
+<li>No hardware impairment (phase noise, quantization of ADC) modeling</li>
+</ul>
+<h3 id="83-future-scope">8.3 Future Scope</h3>
+<p>The experimental results motivate several promising research directions:</p>
+<h4 id="831-multi-user-ris-channel-estimation-with-rl">8.3.1 Multi-User RIS Channel Estimation with RL</h4>
+<p>The most impactful extension is multi-user support. In a network with <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>K</mi></mrow></math></span> simultaneous users, the RIS must serve all users with a single phase configuration during each coherence block. The pilot design, phase scheduling, and channel estimation become a joint optimization problem:</p>
+<p><strong>Reinforcement Learning (RL) formulation:</strong>
+- <strong>State:</strong> Current channel estimates for all <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>K</mi></mrow></math></span> users, including uncertainty
+- <strong>Action:</strong> Choice of RIS phase configuration for the next pilot slot
+- <strong>Reward:</strong> Sum-rate after beamforming, penalized by pilot overhead
+- <strong>Policy:</strong> A deep RL agent (e.g., Proximal Policy Optimization or SAC) that learns to adaptively select informative pilot configurations</p>
+<p>This would allow the RIS to allocate more pilot budget to users with high channel uncertainty and fewer pilots to users with predictable channels (e.g., those with recently valid estimates).</p>
+<h4 id="832-mobile-user-tracking">8.3.2 Mobile User Tracking</h4>
+<p>For moving users, the channel becomes time-varying:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mi>&#x1D407;</mi><mi>c</mi></msub><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><msub><mi>&#x1D407;</mi><mi>c</mi></msub><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo>&#x02212;</mo><mn>1</mn><mo stretchy="false">&#x00029;</mo><mo>&#x0002B;</mo><mi>&#x00394;</mi><mi>&#x1D407;</mi><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo></mrow></math></div>
+<p>where <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x00394;</mi><mi>&#x1D407;</mi><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo></mrow></math></span> depends on the user velocity. A recurrent network (LSTM or GRU) can track channel dynamics:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msub><mover accent="true"><mrow><mi>&#x1D407;</mi></mrow><mo>&#x0005E;</mo></mover><mi>c</mi></msub><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><msub><mi>f</mi><mi>&#x003B8;</mi></msub><mspace width="negativethinmathspace" /><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mi>&#x1D418;</mi><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0002C;</mo><mspace width="0.167em" /><msub><mover accent="true"><mrow><mi>&#x1D407;</mi></mrow><mo>&#x0005E;</mo></mover><mi>c</mi></msub><mo stretchy="false">&#x00028;</mo><mi>t</mi><mo>&#x02212;</mo><mn>1</mn><mo stretchy="false">&#x00029;</mo><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow></mrow></math></div>
+<p>The hidden state of the RNN carries temporal memory of the channel evolution, enabling accurate tracking with fewer re-estimation pilots per coherence block.</p>
+<h4 id="833-transformer-based-channel-estimation">8.3.3 Transformer-Based Channel Estimation</h4>
+<p>Transformer architectures have demonstrated state-of-the-art performance on sequence and image tasks by capturing global dependencies through multi-head self-attention. For RIS channel estimation:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><mtext>Attention</mtext><mo stretchy="false">&#x00028;</mo><mi>&#x1D410;</mi><mo>&#x0002C;</mo><mi>&#x1D40A;</mi><mo>&#x0002C;</mo><mi>&#x1D415;</mi><mo stretchy="false">&#x00029;</mo><mo>&#x0003D;</mo><mtext>softmax</mtext><mspace width="negativethinmathspace" /><mrow><mo stretchy="true" fence="true" form="prefix">&#x00028;</mo><mfrac><mrow><mi>&#x1D410;</mi><msup><mi>&#x1D40A;</mi><mi>T</mi></msup></mrow><mrow><msqrt><mrow><msub><mi>d</mi><mi>k</mi></msub></mrow></msqrt></mrow></mfrac><mo stretchy="true" fence="true" form="postfix">&#x00029;</mo></mrow><mi>&#x1D415;</mi></mrow></math></div>
+<p>Treating the BS antennas as a sequence and the RIS pilot slots as context tokens, a Transformer can model long-range BS-antenna correlations that the local 3×3 convolutions of the CNN cannot capture efficiently. Expected benefits:</p>
+<ul>
+<li>Better representation of global channel structure (array-wide coherence)</li>
+<li>Architecture that naturally scales with <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi></mrow></math></span> without re-parameterization</li>
+<li>Attention maps interpretable as angular coupling weights</li>
+</ul>
+<h4 id="834-wideband-ofdm-extension">8.3.4 Wideband OFDM Extension</h4>
+<p>Real mmWave systems use OFDM with many subcarriers. The wideband cascaded channel has an additional frequency dimension:</p>
+<div class="math-display"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mrow><msubsup><mi>&#x1D407;</mi><mi>c</mi><mrow><mo stretchy="false">&#x00028;</mo><mi>k</mi><mo stretchy="false">&#x00029;</mo></mrow></msubsup><mo>&#x0003D;</mo><munderover><mo>&#x02211;</mo><mrow><mi>&#x02113;</mi><mo>&#x0003D;</mo><mn>1</mn></mrow><mrow><mi>L</mi></mrow></munderover><msub><mi>&#x003B1;</mi><mi>&#x02113;</mi></msub><mspace width="0.167em" /><msup><mi>e</mi><mrow><mo>&#x02212;</mo><mi>j</mi><mn>2</mn><mi>&#x003C0;</mi><msub><mi>f</mi><mi>k</mi></msub><msub><mi>&#x003C4;</mi><mi>&#x02113;</mi></msub></mrow></msup><mspace width="0.167em" /><msub><mi>&#x1D41A;</mi><mrow><mi>B</mi><mi>S</mi></mrow></msub><mo stretchy="false">&#x00028;</mo><msub><mi>&#x003D5;</mi><mi>&#x02113;</mi></msub><mo stretchy="false">&#x00029;</mo><mspace width="0.167em" /><msub><mi>&#x1D41A;</mi><mrow><mi>R</mi><mi>I</mi><mi>S</mi></mrow></msub><mo stretchy="false">&#x00028;</mo><msub><mi>&#x003C6;</mi><mi>&#x02113;</mi></msub><msup><mo stretchy="false">&#x00029;</mo><mi>H</mi></msup><mspace width="0.278em" /><mo>&#x02208;</mo><mspace width="0.278em" /><msup><mi>&#x02102;</mi><mrow><mi>M</mi><mo>&#x000D7;</mo><mi>N</mi></mrow></msup></mrow></math></div>
+<p>where <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>f</mi><mi>k</mi></msub></mrow></math></span> is the <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>k</mi></mrow></math></span>-th subcarrier frequency and <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x003C4;</mi><mi>&#x02113;</mi></msub></mrow></math></span> is the delay of the <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>&#x02113;</mi></mrow></math></span>-th path. A 3D CNN or Transformer operating on <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mo stretchy="false">[</mo><mi>M</mi><mo>&#x0002C;</mo><mi>N</mi><mo>&#x0002C;</mo><mi>K</mi><mo stretchy="false">]</mo></mrow></math></span> tensors (antenna × RIS element × subcarrier) would be needed to exploit both angular and delay-domain sparsity simultaneously.</p>
+<h4 id="835-real-world-data-validation">8.3.5 Real-World Data Validation</h4>
+<p>A critical next step is validating the learned estimators on channel measurements from real RIS testbeds. Several academic groups have built RIS prototypes at 28 GHz. Training on synthetic data and fine-tuning on real measurements (transfer learning) could bridge the sim-to-real gap.</p>
+<h4 id="836-summary-of-future-directions">8.3.6 Summary of Future Directions</h4>
+<table>
+<thead>
+<tr>
+<th>Direction</th>
+<th>Key Technique</th>
+<th>Expected Benefit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Multi-user</td>
+<td>Reinforcement Learning (RL/PPO)</td>
+<td>Adaptive pilot allocation, multi-user throughput</td>
+</tr>
+<tr>
+<td>Mobile users</td>
+<td>LSTM/GRU tracking</td>
+<td>Reduced pilot overhead through temporal continuity</td>
+</tr>
+<tr>
+<td>Architecture</td>
+<td>Transformer + attention</td>
+<td>Global structure, scalable to large RIS</td>
+</tr>
+<tr>
+<td>Wideband</td>
+<td>3D CNN / OFDM extension</td>
+<td>Delay-Doppler joint estimation</td>
+</tr>
+<tr>
+<td>Real-world</td>
+<td>Sim-to-real transfer learning</td>
+<td>Practical deployment validity</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="9-references">9. References</h2>
+<p><strong>[1]</strong> Q. Wu and R. Zhang, "Intelligent Reflecting Surface Enhanced Wireless Network: Joint Active and Passive Beamforming Design," <em>IEEE Transactions on Wireless Communications</em>, vol. 18, no. 11, pp. 5394–5409, Nov. 2019. DOI: 10.1109/TWC.2019.2936025</p>
+<p><strong>[2]</strong> C. Huang, A. Zappone, G. C. Alexandropoulos, M. Debbah, and C. Yuen, "Reconfigurable Intelligent Surfaces for Energy Efficiency in Wireless Communication," <em>IEEE Transactions on Wireless Communications</em>, vol. 18, no. 8, pp. 4157–4170, Aug. 2019. DOI: 10.1109/TWC.2019.2922609</p>
+<p><strong>[3]</strong> J. He, H. Wymeersch, L. Kong, O. Silvén, and M. Juntti, "Deep Learning-Based Channel Estimation for RIS-Assisted mmWave Systems," <em>IEEE Wireless Communications Letters</em>, vol. 10, no. 11, pp. 2427–2431, Nov. 2021. DOI: 10.1109/LWC.2021.3096423</p>
+<p><strong>[4]</strong> E. Basar, M. Di Renzo, J. De Rosny, M. Debbah, M.-S. Alouini, and R. Zhang, "Wireless Communications Through Reconfigurable Intelligent Surfaces," <em>IEEE Access</em>, vol. 7, pp. 116753–116773, 2019.</p>
+<p><strong>[5]</strong> A. Taha, M. Alrabeiah, and A. Alkhateeb, "Enabling Large Intelligent Surfaces With Compressive Sensing and Deep Learning," <em>IEEE Access</em>, vol. 9, pp. 44304–44321, 2021.</p>
+<p><strong>[6]</strong> K. Zhang, W. Zuo, Y. Chen, D. Meng, and L. Zhang, "Beyond a Gaussian Denoiser: Residual Learning of Deep CNN for Image Denoising," <em>IEEE Transactions on Image Processing</em>, vol. 26, no. 7, pp. 3142–3155, Jul. 2017. (DnCNN architecture)</p>
+<p><strong>[7]</strong> I. Loshchilov and F. Hutter, "Decoupled Weight Decay Regularization," in <em>Proc. International Conference on Learning Representations (ICLR)</em>, 2019. (AdamW optimizer)</p>
+<p><strong>[8]</strong> T. L. Marzetta, "Noncooperative Cellular Wireless with Unlimited Numbers of Base Station Antennas," <em>IEEE Transactions on Wireless Communications</em>, vol. 9, no. 11, pp. 3590–3600, Nov. 2010. (Massive MIMO reference)</p>
+<p><strong>[9]</strong> O. E. Ayach, S. Rajagopal, S. Abu-Surra, Z. Pi, and R. W. Heath, Jr., "Spatially Sparse Precoding in Millimeter Wave MIMO Systems," <em>IEEE Transactions on Wireless Communications</em>, vol. 13, no. 3, pp. 1499–1513, Mar. 2014. (mmWave sparse channel model)</p>
+<p><strong>[10]</strong> A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin, "Attention Is All You Need," in <em>Proc. NeurIPS</em>, 2017. (Transformer architecture for future work)</p>
+<hr />
+<p><em>End of Report</em></p>
+<hr />
+<blockquote>
+<p><strong>Repository:</strong> <code>RIS-Channel-Estimation-Using-CNN-</code>
+<strong>Experiment runs documented:</strong> <code>data/runs/cnn_baseline/20260421-221441</code> (Single CNN) and <code>data/runs/support_cnn_baseline/20260511-095810</code> (Angular Dual CNN)
+<strong>Dataset:</strong> <code>data/ris_mmwave_v1</code> and <code>data/dataset_large</code> (seed 2026, <code>ris_mmwave_v1</code> version)</p>
+</blockquote>
+</body>
+</html>
