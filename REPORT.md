@@ -359,7 +359,7 @@ This is realistic: practical RIS controllers implement discrete phase states due
 The data generation follows this deterministic, reproducible pipeline:
 
 ```mermaid
-flowchart TD
+flowchart LR
     A["Config YAML\n(carrier_freq, arrays,\npaths, pilot_lengths, SNR grid)"]
     B["Sample Geometry\n(random UE position\nwithin sector)"]
     C["Generate BS–RIS channel G\n(sparse geometric MIMO\nLoS + NLoS paths)"]
@@ -532,7 +532,7 @@ Reshape:   [batch, 2, M, N]
 The output is the predicted normalized channel.
 
 ```mermaid
-flowchart TD
+flowchart LR
     I["Input Observation\n[batch, 2, Q, M]"]
     C1["Conv Block 1\n3×3, 32 ch\n[batch, 32, Q, M]"]
     C2["Conv Block 2\n3×3, 64 ch\n[batch, 64, Q, M]"]

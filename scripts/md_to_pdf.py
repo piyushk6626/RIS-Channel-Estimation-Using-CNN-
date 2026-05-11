@@ -32,7 +32,7 @@ MERMAID_FENCE_RE = re.compile(r"```mermaid\n(.*?)\n```", re.DOTALL)
 # Use the PNG endpoint with white background and 2x scale for crispness.
 # SVG output from mermaid.ink embeds labels inside <foreignObject>, which
 # WeasyPrint cannot render (boxes appear empty in the PDF).
-MERMAID_INK_URL = "https://mermaid.ink/img/{encoded}?type=png&bgColor=white&width=1600"
+MERMAID_INK_URL = "https://mermaid.ink/img/{encoded}?type=png&bgColor=white&width=900"
 
 
 def _render_mermaid(source: str, cache_dir: Path) -> Path | None:
@@ -405,9 +405,11 @@ def build_html(md_path: Path, report_root: Path) -> tuple[str, str]:
     }
 
     .mermaid-diagram img {
-        max-width: 100%;
+        display: block;
+        width: auto;
+        max-width: 15cm;
+        max-height: 18cm;
         height: auto;
-        display: inline-block;
         margin: 0 auto;
         border: 1px solid #e2e8f0;
         border-radius: 4px;

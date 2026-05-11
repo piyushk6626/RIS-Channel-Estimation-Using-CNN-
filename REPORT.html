@@ -207,7 +207,7 @@ return np.exp(1j * phase).reshape(-1) / np.sqrt(array_config.size)
 <p>This is realistic: practical RIS controllers implement discrete phase states due to hardware limitations (1-bit or 2-bit PIN diode or varactor-based phase shifters).</p>
 <h3 id="310-synthetic-dataset-generation-pipeline">3.10 Synthetic Dataset Generation Pipeline</h3>
 <p>The data generation follows this deterministic, reproducible pipeline:</p>
-<div class="mermaid-diagram"><img src="file:///Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/assets/mermaid/mermaid_102fa943d346a249.png" alt="Mermaid diagram"/></div>
+<div class="mermaid-diagram"><img src="file:///Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/assets/mermaid/mermaid_f01180373e110d5f.png" alt="Mermaid diagram"/></div>
 
 <p><strong>Figure 2: Synthetic dataset generation pipeline.</strong></p>
 <p>The SNR schedule is balanced: for 8000 training samples and 5 SNR values (0, 5, 10, 15, 20 dB), exactly 1600 samples fall at each SNR level, shuffled randomly. This ensures equal representation across all noise conditions.</p>
@@ -330,7 +330,7 @@ FC output: [batch, 2·M·N]
 Reshape:   [batch, 2, M, N]
 </code></pre>
 <p>The output is the predicted normalized channel.</p>
-<div class="mermaid-diagram"><img src="file:///Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/assets/mermaid/mermaid_467d68c40c49e7f6.png" alt="Mermaid diagram"/></div>
+<div class="mermaid-diagram"><img src="file:///Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/assets/mermaid/mermaid_3b4c168f2b2974f7.png" alt="Mermaid diagram"/></div>
 
 <p><strong>Figure 3: Single CNN architecture.</strong> Three convolutional blocks extract spatial features from the 2D pilot observation map, then a fully connected head regresses the full cascaded channel.</p>
 <h4 id="435-parameter-count">4.3.5 Parameter Count</h4>
