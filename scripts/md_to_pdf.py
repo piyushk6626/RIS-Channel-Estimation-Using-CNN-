@@ -1,9 +1,20 @@
-"""Convert REPORT.md to REPORT.pdf using markdown + WeasyPrint + MathML."""
+"""Convert REPORT.md to REPORT.pdf using markdown + WeasyPrint + MathML.
+
+Mermaid flowcharts (```mermaid ... ``` fenced blocks) are rendered to PNG via
+the public ``mermaid.ink`` service and cached locally in ``assets/mermaid/``
+so the PDF embeds real diagrams rather than raw source text. PNG is used
+instead of SVG because Mermaid emits node labels inside ``<foreignObject>``
+which WeasyPrint cannot render, producing empty boxes in the PDF.
+"""
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import re
 import sys
+import urllib.error
+import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any
@@ -11,6 +22,75 @@ from typing import Any
 import markdown
 import latex2mathml.converter
 from weasyprint import CSS, HTML
+
+
+# ---------------------------------------------------------------------------
+# Mermaid rendering
+# ---------------------------------------------------------------------------
+
+MERMAID_FENCE_RE = re.compile(r"```mermaid\n(.*?)\n```", re.DOTALL)
+# Use the PNG endpoint with white background and 2x scale for crispness.
+# SVG output from mermaid.ink embeds labels inside <foreignObject>, which
+# WeasyPrint cannot render (boxes appear empty in the PDF).
+MERMAID_INK_URL = "https://mermaid.ink/img/{encoded}?type=png&bgColor=white&width=1600"
+
+
+def _render_mermaid(source: str, cache_dir: Path) -> Path | None:
+    """Render a Mermaid diagram to PNG using mermaid.ink and cache it.
+
+    Returns the path to the cached PNG file, or None if rendering failed.
+    """
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha1(source.strip().encode("utf-8")).hexdigest()[:16]
+    png_path = cache_dir / f"mermaid_{digest}.png"
+
+    if png_path.exists() and png_path.stat().st_size > 0:
+        return png_path
+
+    encoded = base64.urlsafe_b64encode(source.strip().encode("utf-8")).decode("ascii")
+    url = MERMAID_INK_URL.format(encoded=encoded)
+    # mermaid.ink rejects non-browser User-Agents on the /img/ endpoint (403).
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+        ),
+        "Accept": "image/png,image/*;q=0.8,*/*;q=0.5",
+    }
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = resp.read()
+        png_path.write_bytes(data)
+        return png_path
+    except (urllib.error.URLError, TimeoutError) as exc:
+        print(f"  [warn] Could not render Mermaid diagram via mermaid.ink: {exc}")
+        return None
+
+
+def preprocess_mermaid(text: str, report_root: Path) -> str:
+    """Replace ```mermaid``` fenced blocks with <img> tags pointing to SVGs."""
+    cache_dir = report_root / "assets" / "mermaid"
+
+    def repl(match: re.Match) -> str:
+        source = match.group(1)
+        img_path = _render_mermaid(source, cache_dir)
+        if img_path is None:
+            escaped = (
+                source.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            )
+            return (
+                '<pre class="mermaid-fallback"><code>'
+                + escaped
+                + "</code></pre>"
+            )
+        rel = img_path.relative_to(report_root).as_posix()
+        return (
+            f'<div class="mermaid-diagram"><img src="{rel}" '
+            f'alt="Mermaid diagram"/></div>'
+        )
+
+    return MERMAID_FENCE_RE.sub(repl, text)
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +185,10 @@ def restore_math(html: str, placeholder_map: dict[str, str]) -> str:
 
 def build_html(md_path: Path, report_root: Path) -> tuple[str, str]:
     raw = md_path.read_text(encoding="utf-8")
+
+    print("Rendering Mermaid diagrams (via mermaid.ink, cached)...")
+    raw = preprocess_mermaid(raw, report_root)
+
     processed, placeholder_map = preprocess_md(raw)
 
     md_ext = [
@@ -313,12 +397,31 @@ def build_html(md_path: Path, report_root: Path) -> tuple[str, str]:
 
     a { color: #1565c0; text-decoration: none; }
 
-    /* Mermaid diagrams: rendered as code blocks */
-    .language-mermaid {
+    /* Mermaid diagrams: rendered to SVG via mermaid.ink */
+    .mermaid-diagram {
+        text-align: center;
+        margin: 18px auto;
+        page-break-inside: avoid;
+    }
+
+    .mermaid-diagram img {
+        max-width: 100%;
+        height: auto;
+        display: inline-block;
+        margin: 0 auto;
+        border: 1px solid #e2e8f0;
+        border-radius: 4px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+        background: #ffffff;
+        padding: 8px;
+    }
+
+    /* Fallback rendering when mermaid.ink is unreachable */
+    .mermaid-fallback {
         background: #f0f4ff;
-        border-left-color: #7c3aed;
-        font-style: italic;
+        border-left: 3px solid #7c3aed;
         color: #4b5563;
+        font-style: italic;
     }
     """
 

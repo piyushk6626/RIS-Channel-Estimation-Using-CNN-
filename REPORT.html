@@ -52,14 +52,8 @@
 │                              └───────┘              │
 └─────────────────────────────────────────────────────┘
 </code></pre>
-<pre><code class="language-mermaid">flowchart LR
-    BS[&quot;BS\n(M=16 antennas\n4×4 UPA)&quot;]
-    RIS[&quot;RIS\n(N=32 elements\n4×8 UPA)&quot;]
-    UE[&quot;UE\n(1 antenna\nstationary)&quot;]
-    BS --&gt;|&quot;G ∈ ℂ^(M×N)\nBS–RIS MIMO&quot;| RIS
-    RIS --&gt;|&quot;h_RU ∈ ℂ^N\nRIS–UE vector&quot;| UE
-    BS -.-&gt;|&quot;direct path\n(disabled)&quot;| UE
-</code></pre>
+<div class="mermaid-diagram"><img src="file:///Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/assets/mermaid/mermaid_8ba07b675f94e650.png" alt="Mermaid diagram"/></div>
+
 <p><strong>Figure 1: RIS-assisted communication system model.</strong> The BS transmits to the UE exclusively via the RIS reflection path. The cascaded channel <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><msub><mi>&#x1D407;</mi><mi>c</mi></msub><mo>&#x0003D;</mo><mi>&#x1D406;</mi><mspace width="0.167em" /><mrow><mi mathvariant="normal">d</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">g</mi></mrow><mo stretchy="false">&#x00028;</mo><msub><mi>&#x1D421;</mi><mrow><mi>R</mi><mi>U</mi></mrow></msub><mo stretchy="false">&#x00029;</mo></mrow></math></span> must be estimated.</p>
 <h3 id="13-the-cascaded-channel-estimation-problem">1.3 The Cascaded Channel Estimation Problem</h3>
 <p>When a base station (BS) with <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>M</mi></mrow></math></span> antennas communicates with a single-antenna user exclusively through an RIS with <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>N</mi></mrow></math></span> passive elements, the effective baseband channel seen at the BS receiver during uplink pilot transmission is the <strong>cascaded channel</strong>:</p>
@@ -213,31 +207,8 @@ return np.exp(1j * phase).reshape(-1) / np.sqrt(array_config.size)
 <p>This is realistic: practical RIS controllers implement discrete phase states due to hardware limitations (1-bit or 2-bit PIN diode or varactor-based phase shifters).</p>
 <h3 id="310-synthetic-dataset-generation-pipeline">3.10 Synthetic Dataset Generation Pipeline</h3>
 <p>The data generation follows this deterministic, reproducible pipeline:</p>
-<pre><code class="language-mermaid">flowchart TD
-    A[&quot;Config YAML\n(carrier_freq, arrays,\npaths, pilot_lengths, SNR grid)&quot;]
-    B[&quot;Sample Geometry\n(random UE position\nwithin sector)&quot;]
-    C[&quot;Generate BS–RIS channel G\n(sparse geometric MIMO\nLoS + NLoS paths)&quot;]
-    D[&quot;Generate RIS–UE channel h_RU\n(sparse array response\nLoS + NLoS paths)&quot;]
-    E[&quot;Form cascaded channel\nH_c = G · diag(h_RU)&quot;]
-    F[&quot;Build DFT codebook Ω\n(Q columns, 2-bit quantized)&quot;]
-    G[&quot;Compute clean obs.\nY_clean = H_c · Ω&quot;]
-    H[&quot;Sample target SNR\nfrom balanced schedule&quot;]
-    I[&quot;Add complex Gaussian noise\nY = Y_clean + N&quot;]
-    J[&quot;Save sample:\nY (obs), H_c (label), Ω, SNR, geometry&quot;]
-    K[&quot;Repeat × 10,000\nper pilot length Q&quot;]
+<div class="mermaid-diagram"><img src="file:///Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/assets/mermaid/mermaid_102fa943d346a249.png" alt="Mermaid diagram"/></div>
 
-    A --&gt; B
-    B --&gt; C
-    B --&gt; D
-    C --&gt; E
-    D --&gt; E
-    E --&gt; F
-    F --&gt; G
-    H --&gt; I
-    G --&gt; I
-    I --&gt; J
-    J --&gt; K
-</code></pre>
 <p><strong>Figure 2: Synthetic dataset generation pipeline.</strong></p>
 <p>The SNR schedule is balanced: for 8000 training samples and 5 SNR values (0, 5, 10, 15, 20 dB), exactly 1600 samples fall at each SNR level, shuffled randomly. This ensures equal representation across all noise conditions.</p>
 <h3 id="311-dataset-statistics">3.11 Dataset Statistics</h3>
@@ -359,18 +330,8 @@ FC output: [batch, 2·M·N]
 Reshape:   [batch, 2, M, N]
 </code></pre>
 <p>The output is the predicted normalized channel.</p>
-<pre><code class="language-mermaid">flowchart TD
-    I[&quot;Input Observation\n[batch, 2, Q, M]&quot;]
-    C1[&quot;Conv Block 1\n3×3, 32 ch\n[batch, 32, Q, M]&quot;]
-    C2[&quot;Conv Block 2\n3×3, 64 ch\n[batch, 64, Q, M]&quot;]
-    C3[&quot;Conv Block 3\n3×3, 64 ch\n[batch, 64, Q, M]&quot;]
-    FL[&quot;Flatten\n[batch, 64·Q·M]&quot;]
-    FC1[&quot;FC + ReLU + Dropout\n[batch, 256]&quot;]
-    FC2[&quot;FC (linear)\n[batch, 2·M·N]&quot;]
-    O[&quot;Reshape → Channel Estimate\n[batch, 2, M, N]&quot;]
+<div class="mermaid-diagram"><img src="file:///Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/assets/mermaid/mermaid_467d68c40c49e7f6.png" alt="Mermaid diagram"/></div>
 
-    I --&gt; C1 --&gt; C2 --&gt; C3 --&gt; FL --&gt; FC1 --&gt; FC2 --&gt; O
-</code></pre>
 <p><strong>Figure 3: Single CNN architecture.</strong> Three convolutional blocks extract spatial features from the 2D pilot observation map, then a fully connected head regresses the full cascaded channel.</p>
 <h4 id="435-parameter-count">4.3.5 Parameter Count</h4>
 <p>The total number of trainable parameters depends on the pilot length <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi></mrow></math></span>:</p>
@@ -512,26 +473,8 @@ Angular Dual CNN: angular support → sparse reconstruction → residual correct
 <p>For the 4×4 BS array, the BS angular grid has 4×4 = 16 bins arranged as 4 row bins × 4 column bins. For the 4×8 RIS array, the RIS angular grid has 4×8 = 32 bins arranged as 4 row bins × 8 column bins.</p>
 <h3 id="63-three-stage-architecture">6.3 Three-Stage Architecture</h3>
 <p>The proposed angular dual CNN decomposes the estimation into three sequential learned stages:</p>
-<pre><code class="language-mermaid">flowchart LR
-    Y[&quot;Pilot Observations\nY ∈ ℂ^(M×Q)&quot;]
-    AngCorr[&quot;Angular\nCorrelation\nMatrix C&quot;]
-    RowCNN[&quot;Stage 1\nRow-Support CNN\nSupportDnCNN&quot;]
-    ColCNN[&quot;Stage 2\nColumn-Support CNN\nSupportDnCNN&quot;]
-    Sparse[&quot;Sparse Angular\nReconstruction\nĤ_sparse&quot;]
-    R[&quot;Residual\nR = H - Ĥ_sparse&quot;]
-    ResidCNN[&quot;Stage 3\nRefinement CNN\nCompactCnnEstimator&quot;]
-    Final[&quot;Final Estimate\nĤ = Ĥ_sparse + R̂_CNN&quot;]
+<div class="mermaid-diagram"><img src="file:///Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/assets/mermaid/mermaid_d23a4a1b91a9e05b.png" alt="Mermaid diagram"/></div>
 
-    Y --&gt; AngCorr
-    AngCorr --&gt; RowCNN
-    RowCNN --&gt; ColCNN
-    ColCNN --&gt; Sparse
-    Y --&gt; R
-    Sparse --&gt; R
-    R --&gt; ResidCNN
-    Sparse --&gt; Final
-    ResidCNN --&gt; Final
-</code></pre>
 <p><strong>Figure 4: Angular-domain dual CNN architecture.</strong> Three sequential learned stages progressively refine the channel estimate from coarse angular support to residual correction.</p>
 <h3 id="64-stage-1-row-support-cnn">6.4 Stage 1: Row-Support CNN</h3>
 <p><strong>Purpose:</strong> Identify the dominant BS angular row bins that contain most of the channel energy.</p>
@@ -963,7 +906,7 @@ Angular Dual CNN: angular support → sparse reconstruction → residual correct
 </table>
 <p><strong>Table 7: Stage-level training convergence.</strong> Support CNNs converge in 10–20 epochs. The refinement CNN takes longer (20–50 epochs) because it is fitting a more complex, full-channel residual.</p>
 <h3 id="79-channel-reconstruction-examples-angular-dual-cnn">7.9 Channel Reconstruction Examples: Angular Dual CNN</h3>
-<p><img src="file:///Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/data/runs/support_cnn_baseline/20260511-095810/pilots_16/plots/channel_examples.png" alt="Angular Dual CNN Channel Examples Q=16" width="70%"></p>
+<p><img src="file:///Users/piyush/dev/project/Wirless Communiaction/RIS-Channel-Estimation-Using-CNN-/data/runs/support_cnn_baseline/20260511-095810/pilots_16/plots/channel_examples.png" alt="Angular Dual CNN Channel Examples Q=16" width="60%"></p>
 <p><strong>Figure 10: True vs. predicted channel at <span class="math-inline"><math xmlns="http://www.w3.org/1998/Math/MathML" display="inline"><mrow><mi>Q</mi><mo>&#x0003D;</mo><mn>16</mn></mrow></math></span> (Angular Dual CNN).</strong> Compared to the single CNN at the same pilot length, the dual CNN prediction captures finer spatial structure due to the angular decomposition followed by residual correction.</p>
 <h3 id="710-refinement-cnn-training-curve">7.10 Refinement CNN Training Curve</h3>
 <p><img alt="Refinement NMSE Curve Q=16" src="data/runs/support_cnn_baseline/20260511-095810/pilots_16/plots/refinement_nmse_curve.png" /></p>
