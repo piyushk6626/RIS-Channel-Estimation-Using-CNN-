@@ -1,4 +1,4 @@
-experiment_name: cnn_baseline
+experiment_name: support_cnn_baseline
 data_root: data/dataset_small
 output_root: data/runs
 pilot_lengths: [8, 12, 16, 24, 32]

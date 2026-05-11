@@ -1,0 +1,227 @@
+{
+  "pilot_length": 32,
+  "device": "mps",
+  "best_epoch": 21,
+  "best_row_epoch": 8,
+  "best_column_epoch": 21,
+  "row_epochs_completed": 16,
+  "column_epochs_completed": 29,
+  "config": {
+    "experiment_name": "support_cnn_baseline_support",
+    "data_root": "data/dataset_large",
+    "output_root": "data/runs",
+    "pilot_lengths": [
+      8,
+      12,
+      16,
+      24,
+      32
+    ],
+    "device": "auto",
+    "batch_size": 128,
+    "num_workers": 0,
+    "epochs": 60,
+    "seed": 2026,
+    "optimizer": {
+      "lr": 0.001,
+      "weight_decay": 0.0001
+    },
+    "early_stopping": {
+      "patience": 8,
+      "min_delta": 0.0
+    },
+    "model": {
+      "conv_channels": [
+        32,
+        64,
+        64
+      ],
+      "hidden_dim": 256,
+      "dropout": 0.1
+    },
+    "plot_examples": 3
+  },
+  "angular_metadata": {
+    "bs_rows": 4,
+    "bs_cols": 4,
+    "ris_rows": 4,
+    "ris_cols": 8,
+    "row_support_count": 3,
+    "col_support_count": 2
+  },
+  "dataset": {
+    "bs_antennas": 16,
+    "ris_elements": 32,
+    "train_samples": 8000,
+    "val_samples": 1000,
+    "test_samples": 1000
+  },
+  "validation": {
+    "cnn": {
+      "count": 1000,
+      "mse_mean": 4.009318682703152e-23,
+      "mse_std": 3.026674630734042e-22,
+      "nmse_mean": 0.3089055702966049,
+      "nmse_std": 0.13492911334826588,
+      "nmse_db_mean": -5.559793015991777,
+      "nmse_db_std": 2.091585421006535,
+      "per_snr": {
+        "0": {
+          "count": 200,
+          "mse_mean": 7.815417793068271e-23,
+          "nmse_mean": 0.3306269760279513,
+          "nmse_db_mean": -5.196848232004149
+        },
+        "5": {
+          "count": 200,
+          "mse_mean": 3.4260463511844035e-23,
+          "nmse_mean": 0.3087848530343331,
+          "nmse_db_mean": -5.571767984859975
+        },
+        "10": {
+          "count": 200,
+          "mse_mean": 2.9623865455281955e-23,
+          "nmse_mean": 0.30973750471918327,
+          "nmse_db_mean": -5.638161618293774
+        },
+        "15": {
+          "count": 200,
+          "mse_mean": 2.9018650510533486e-23,
+          "nmse_mean": 0.2974940554150183,
+          "nmse_db_mean": -5.776961478437706
+        },
+        "20": {
+          "count": 200,
+          "mse_mean": 2.940877672681539e-23,
+          "nmse_mean": 0.2978844622865387,
+          "nmse_db_mean": -5.615225766363283
+        }
+      }
+    },
+    "ls": {
+      "count": 1000,
+      "mse_mean": 6.478979910831352e-23,
+      "mse_std": 6.397744407333041e-22,
+      "nmse_mean": 0.4234454291369922,
+      "nmse_std": 0.5507380680108022,
+      "nmse_db_mean": -8.435009315958483,
+      "nmse_db_std": 7.109616813888594,
+      "per_snr": {
+        "0": {
+          "count": 200,
+          "mse_mean": 2.4718218186043215e-22,
+          "nmse_mean": 1.4464267227263121,
+          "nmse_db_mean": 1.5278282043335742
+        },
+        "5": {
+          "count": 200,
+          "mse_mean": 5.744058772413426e-23,
+          "nmse_mean": 0.465005499960255,
+          "nmse_db_mean": -3.393507919591683
+        },
+        "10": {
+          "count": 200,
+          "mse_mean": 1.3766610644297626e-23,
+          "nmse_mean": 0.1449255705206892,
+          "nmse_db_mean": -8.448667505012926
+        },
+        "15": {
+          "count": 200,
+          "mse_mean": 4.1515869362628944e-24,
+          "nmse_mean": 0.04642756664680962,
+          "nmse_db_mean": -13.396645401330524
+        },
+        "20": {
+          "count": 200,
+          "mse_mean": 1.4080283764406628e-24,
+          "nmse_mean": 0.014441785830894935,
+          "nmse_db_mean": -18.46405395819086
+        }
+      }
+    }
+  },
+  "test": {
+    "cnn": {
+      "count": 1000,
+      "mse_mean": 3.976242556517099e-23,
+      "mse_std": 1.80351046113171e-22,
+      "nmse_mean": 0.3098770306712933,
+      "nmse_std": 0.13516100999769115,
+      "nmse_db_mean": -5.530274947052085,
+      "nmse_db_std": 2.0354674038778175,
+      "per_snr": {
+        "0": {
+          "count": 200,
+          "mse_mean": 3.595097243352332e-23,
+          "nmse_mean": 0.31500852062127793,
+          "nmse_db_mean": -5.454939393432224
+        },
+        "5": {
+          "count": 200,
+          "mse_mean": 3.638378042753551e-23,
+          "nmse_mean": 0.32023285411282854,
+          "nmse_db_mean": -5.409586690915094
+        },
+        "10": {
+          "count": 200,
+          "mse_mean": 2.999715945336305e-23,
+          "nmse_mean": 0.2981570855728277,
+          "nmse_db_mean": -5.731792137641546
+        },
+        "15": {
+          "count": 200,
+          "mse_mean": 6.14726848109549e-23,
+          "nmse_mean": 0.3112468623465203,
+          "nmse_db_mean": -5.490825826511784
+        },
+        "20": {
+          "count": 200,
+          "mse_mean": 3.5007530700478133e-23,
+          "nmse_mean": 0.3047398307030121,
+          "nmse_db_mean": -5.564230686759776
+        }
+      }
+    },
+    "ls": {
+      "count": 1000,
+      "mse_mean": 5.041531877686554e-23,
+      "mse_std": 1.646127042649531e-22,
+      "nmse_mean": 0.42657232088198227,
+      "nmse_std": 0.5573812533227522,
+      "nmse_db_mean": -8.447909058789461,
+      "nmse_db_std": 7.131736164236843,
+      "per_snr": {
+        "0": {
+          "count": 200,
+          "mse_mean": 1.7253085691812471e-22,
+          "nmse_mean": 1.4694874943235834,
+          "nmse_db_mean": 1.6082337056102805
+        },
+        "5": {
+          "count": 200,
+          "mse_mean": 5.488630935266915e-23,
+          "nmse_mean": 0.4597578046964527,
+          "nmse_db_mean": -3.4339210103988353
+        },
+        "10": {
+          "count": 200,
+          "mse_mean": 1.4914221119850736e-23,
+          "nmse_mean": 0.1435143607200317,
+          "nmse_db_mean": -8.489173011866615
+        },
+        "15": {
+          "count": 200,
+          "mse_mean": 8.03039204853961e-24,
+          "nmse_mean": 0.045640712213773374,
+          "nmse_db_mean": -13.464085194368714
+        },
+        "20": {
+          "count": 200,
+          "mse_mean": 1.7148144451434854e-24,
+          "nmse_mean": 0.014461232456069792,
+          "nmse_db_mean": -18.460599782923424
+        }
+      }
+    }
+  }
+}

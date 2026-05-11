@@ -60,3 +60,37 @@ class CompactCnnEstimator(nn.Module):
         features = self.features(inputs)
         outputs = self.regressor(features)
         return outputs.view(inputs.shape[0], *self.output_shape)
+
+
+class SupportDnCNN(nn.Module):
+    """Fully convolutional denoiser for angular support map estimation."""
+
+    def __init__(
+        self,
+        input_channels: int = 1,
+        *,
+        conv_channels: tuple[int, ...] = (64, 64, 64),
+        dropout: float = 0.1,
+    ) -> None:
+        super().__init__()
+        if not conv_channels:
+            raise ValueError("conv_channels must be non-empty for SupportDnCNN.")
+
+        layers: list[nn.Module] = [
+            nn.Conv2d(input_channels, conv_channels[0], kernel_size=3, padding=1, bias=True),
+            nn.ReLU(inplace=True),
+        ]
+        for channels_in, channels_out in zip(conv_channels[:-1], conv_channels[1:]):
+            layers.extend(
+                [
+                    nn.Conv2d(channels_in, channels_out, kernel_size=3, padding=1, bias=False),
+                    nn.BatchNorm2d(channels_out),
+                    nn.ReLU(inplace=True),
+                    nn.Dropout2d(dropout),
+                ]
+            )
+        layers.append(nn.Conv2d(conv_channels[-1], input_channels, kernel_size=3, padding=1, bias=True))
+        self.residual = nn.Sequential(*layers)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        return inputs - self.residual(inputs)
