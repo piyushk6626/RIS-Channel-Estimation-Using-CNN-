@@ -176,6 +176,7 @@ def test_training_smoke_run_creates_artifacts(tmp_path):
     assert (pilot_dir / "best.pt").exists()
     assert (pilot_dir / "last.pt").exists()
     assert (pilot_dir / "history.csv").exists()
+    assert (pilot_dir / "refinement_history.csv").exists()
     assert (pilot_dir / "metrics.json").exists()
     assert (pilot_dir / "normalization.json").exists()
     assert (pilot_dir / "predictions.npz").exists()
@@ -187,6 +188,7 @@ def test_training_smoke_run_creates_artifacts(tmp_path):
 
     metrics = json.loads((pilot_dir / "metrics.json").read_text(encoding="utf-8"))
     assert metrics["pilot_length"] == 8
+    assert "best_refinement_epoch" in metrics
     assert set(metrics["test"]) == {"cnn", "ls"}
 
 

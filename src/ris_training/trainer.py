@@ -19,14 +19,15 @@ from .angular import compute_correlation_matrix, reconstruct_channel, top_suppor
 from .config import TrainingConfig
 from .data import (
     ChannelEstimationDataset,
+    NormalizationStats,
     PreparedSupportData,
     SplitData,
     SupportNormalizationStats,
     SupportTensorSplit,
     load_support_data,
 )
-from .metrics import EvaluationResult, evaluate_predictions
-from .model import SupportDnCNN
+from .metrics import EvaluationResult, channels_first_to_last, evaluate_predictions
+from .model import CompactCnnEstimator, SupportDnCNN
 from .plotting import (
     plot_all_pilots_snr_comparison,
     plot_channel_examples,
@@ -45,8 +46,10 @@ class PilotRunResult:
     run_dir: Path
     best_row_epoch: int
     best_column_epoch: int
+    best_refinement_epoch: int
     row_history: list[dict[str, float]]
     column_history: list[dict[str, float]]
+    refinement_history: list[dict[str, float]]
     cnn_val: EvaluationResult
     cnn_test: EvaluationResult
     ls_val: EvaluationResult
@@ -111,12 +114,44 @@ def train_single_pilot(
         device,
     )
 
-    cnn_val_prediction = reconstruct_predictions(row_model, column_model, support_data, support_data.pilot_data.val, device)
-    cnn_test_prediction = reconstruct_predictions(
+    sparse_train_prediction = reconstruct_predictions(
+        row_model,
+        column_model,
+        support_data,
+        support_data.pilot_data.train,
+        device,
+    )
+    sparse_val_prediction = reconstruct_predictions(row_model, column_model, support_data, support_data.pilot_data.val, device)
+    sparse_test_prediction = reconstruct_predictions(
         row_model,
         column_model,
         support_data,
         support_data.pilot_data.test,
+        device,
+    )
+    refinement_model, refinement_stats, refinement_history, best_refinement_epoch = _fit_refinement_model(
+        support_data,
+        sparse_train_prediction,
+        sparse_val_prediction,
+        config,
+        pilot_length,
+        pilot_dir,
+        device,
+    )
+    cnn_val_prediction = sparse_val_prediction + predict_refinement_split(
+        refinement_model,
+        refinement_stats,
+        support_data.pilot_data.val,
+        config.batch_size,
+        config.num_workers,
+        device,
+    )
+    cnn_test_prediction = sparse_test_prediction + predict_refinement_split(
+        refinement_model,
+        refinement_stats,
+        support_data.pilot_data.test,
+        config.batch_size,
+        config.num_workers,
         device,
     )
     cnn_val = evaluate_predictions(cnn_val_prediction, support_data.pilot_data.val.channel, support_data.pilot_data.val.snr_db)
@@ -140,11 +175,13 @@ def train_single_pilot(
 
     _write_history(pilot_dir / "history.csv", row_history)
     _write_history(pilot_dir / "column_history.csv", column_history)
+    _write_history(pilot_dir / "refinement_history.csv", refinement_history)
     (pilot_dir / "normalization.json").write_text(
         json.dumps(
             {
                 "row": support_data.row_stats.to_dict(),
                 "column": support_data.col_stats.to_dict(),
+                "refinement": refinement_stats.to_dict(),
             },
             indent=2,
         ),
@@ -154,11 +191,13 @@ def train_single_pilot(
     metrics_payload = {
         "pilot_length": pilot_length,
         "device": str(device),
-        "best_epoch": max(best_row_epoch, best_column_epoch),
+        "best_epoch": max(best_row_epoch, best_column_epoch, best_refinement_epoch),
         "best_row_epoch": best_row_epoch,
         "best_column_epoch": best_column_epoch,
+        "best_refinement_epoch": best_refinement_epoch,
         "row_epochs_completed": len(row_history),
         "column_epochs_completed": len(column_history),
+        "refinement_epochs_completed": len(refinement_history),
         "config": config.to_dict(),
         "angular_metadata": support_data.metadata.to_dict(),
         "dataset": {
@@ -183,29 +222,37 @@ def train_single_pilot(
         pilot_dir / "best.pt",
         row_model,
         column_model,
+        refinement_model,
+        refinement_stats,
         config,
         pilot_length,
         support_data,
         device,
         best_row_epoch,
         best_column_epoch,
+        best_refinement_epoch,
     )
     _save_joint_checkpoint(
         pilot_dir / "last.pt",
         row_model,
         column_model,
+        refinement_model,
+        refinement_stats,
         config,
         pilot_length,
         support_data,
         device,
         len(row_history),
         len(column_history),
+        len(refinement_history),
     )
 
     plot_loss_curve(row_history, plots_dir / "loss_curve.png")
     plot_nmse_curve(row_history, plots_dir / "nmse_curve.png")
     plot_loss_curve(column_history, plots_dir / "column_loss_curve.png")
     plot_nmse_curve(column_history, plots_dir / "column_nmse_curve.png")
+    plot_loss_curve(refinement_history, plots_dir / "refinement_loss_curve.png")
+    plot_nmse_curve(refinement_history, plots_dir / "refinement_nmse_curve.png")
     plot_snr_vs_nmse(cnn_test.summary, ls_test.summary, plots_dir / "snr_vs_nmse.png")
     plot_error_histogram(cnn_test.nmse_db, ls_test.nmse_db, plots_dir / "error_histogram.png")
     plot_channel_examples(
@@ -221,8 +268,10 @@ def train_single_pilot(
         run_dir=pilot_dir,
         best_row_epoch=best_row_epoch,
         best_column_epoch=best_column_epoch,
+        best_refinement_epoch=best_refinement_epoch,
         row_history=row_history,
         column_history=column_history,
+        refinement_history=refinement_history,
         cnn_val=cnn_val,
         cnn_test=cnn_test,
         ls_val=ls_val,
@@ -303,6 +352,31 @@ def reconstruct_predictions(
             )
             predictions[index] = complex_to_channels(estimate)
     return predictions
+
+
+def predict_refinement_split(
+    model: CompactCnnEstimator,
+    stats: NormalizationStats,
+    split: SplitData,
+    batch_size: int,
+    num_workers: int,
+    device: torch.device,
+) -> np.ndarray:
+    loader = DataLoader(
+        ChannelEstimationDataset(split.inputs, np.zeros_like(split.targets, dtype=np.float32)),
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+    )
+    predictions: list[np.ndarray] = []
+    model.eval()
+    with torch.no_grad():
+        for inputs, _targets in loader:
+            outputs = model(inputs.to(device))
+            predictions.append(outputs.cpu().numpy())
+    normalized = np.concatenate(predictions, axis=0)
+    denormalized = stats.denormalize_channel_channels_first(normalized)
+    return channels_first_to_last(denormalized)
 
 
 def select_device(requested_device: str) -> torch.device:
@@ -443,8 +517,147 @@ def _fit_support_model(
     return model, history, best_epoch
 
 
+def _fit_refinement_model(
+    support_data: PreparedSupportData,
+    sparse_train_prediction: np.ndarray,
+    sparse_val_prediction: np.ndarray,
+    config: TrainingConfig,
+    pilot_length: int,
+    pilot_dir: Path,
+    device: torch.device,
+) -> tuple[CompactCnnEstimator, NormalizationStats, list[dict[str, float]], int]:
+    train_residual = (support_data.pilot_data.train.channel - sparse_train_prediction).astype(np.float32)
+    val_residual = (support_data.pilot_data.val.channel - sparse_val_prediction).astype(np.float32)
+    stats = NormalizationStats.from_train_split(support_data.pilot_data.train.observations, train_residual)
+    train_targets = np.transpose(stats.normalize_channel(train_residual), (0, 3, 1, 2))
+    val_targets = np.transpose(stats.normalize_channel(val_residual), (0, 3, 1, 2))
+
+    train_loader = DataLoader(
+        ChannelEstimationDataset(support_data.pilot_data.train.inputs, train_targets),
+        batch_size=config.batch_size,
+        shuffle=True,
+        num_workers=config.num_workers,
+    )
+    val_loader = DataLoader(
+        ChannelEstimationDataset(support_data.pilot_data.val.inputs, val_targets),
+        batch_size=config.batch_size,
+        shuffle=False,
+        num_workers=config.num_workers,
+    )
+
+    model = CompactCnnEstimator(
+        support_data.pilot_data.train.input_shape,
+        support_data.pilot_data.train.target_shape,
+        conv_channels=config.model.conv_channels,
+        hidden_dim=config.model.hidden_dim,
+        dropout=config.model.dropout,
+    ).to(device)
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=config.optimizer.lr,
+        weight_decay=config.optimizer.weight_decay,
+    )
+    criterion = nn.MSELoss()
+    target_mean = torch.tensor(stats.channel_mean, dtype=torch.float32, device=device).view(1, -1, 1, 1)
+    target_std = torch.tensor(stats.channel_std, dtype=torch.float32, device=device).view(1, -1, 1, 1)
+
+    history: list[dict[str, float]] = []
+    best_val_nmse = float("inf")
+    best_epoch = 0
+    epochs_without_improvement = 0
+
+    for epoch in range(1, config.epochs + 1):
+        train_loss, train_nmse = _run_epoch(
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            device,
+            target_mean,
+            target_std,
+            train=True,
+        )
+        val_loss, val_nmse = _run_epoch(
+            model,
+            val_loader,
+            criterion,
+            optimizer,
+            device,
+            target_mean,
+            target_std,
+            train=False,
+        )
+        val_prediction = sparse_val_prediction + predict_refinement_split(
+            model,
+            stats,
+            support_data.pilot_data.val,
+            config.batch_size,
+            config.num_workers,
+            device,
+        )
+        val_final_nmse = float(
+            evaluate_predictions(
+                val_prediction,
+                support_data.pilot_data.val.channel,
+                support_data.pilot_data.val.snr_db,
+            ).summary["nmse_mean"]
+        )
+        row = {
+            "epoch": epoch,
+            "lr": float(optimizer.param_groups[0]["lr"]),
+            "train_loss": float(train_loss),
+            "val_loss": float(val_loss),
+            "train_nmse": float(train_nmse),
+            "val_nmse": float(val_nmse),
+            "train_nmse_db": float(10.0 * np.log10(max(train_nmse, np.finfo(np.float64).tiny))),
+            "val_nmse_db": float(10.0 * np.log10(max(val_nmse, np.finfo(np.float64).tiny))),
+            "val_final_nmse": val_final_nmse,
+            "val_final_nmse_db": float(10.0 * np.log10(max(val_final_nmse, np.finfo(np.float64).tiny))),
+        }
+        history.append(row)
+
+        _save_refinement_checkpoint(
+            pilot_dir / "refinement_last.pt",
+            model,
+            optimizer,
+            config,
+            pilot_length,
+            support_data,
+            stats,
+            epoch,
+            min(best_val_nmse, val_final_nmse),
+            device,
+        )
+
+        if best_val_nmse - val_final_nmse > config.early_stopping.min_delta:
+            best_val_nmse = val_final_nmse
+            best_epoch = epoch
+            epochs_without_improvement = 0
+            _save_refinement_checkpoint(
+                pilot_dir / "refinement_best.pt",
+                model,
+                optimizer,
+                config,
+                pilot_length,
+                support_data,
+                stats,
+                epoch,
+                best_val_nmse,
+                device,
+            )
+        else:
+            epochs_without_improvement += 1
+
+        if epochs_without_improvement >= config.early_stopping.patience:
+            break
+
+    checkpoint = torch.load(pilot_dir / "refinement_best.pt", map_location=device)
+    model.load_state_dict(checkpoint["model_state"])
+    return model, stats, history, best_epoch
+
+
 def _run_epoch(
-    model: SupportDnCNN,
+    model: nn.Module,
     loader: DataLoader[tuple[torch.Tensor, torch.Tensor]],
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
@@ -544,16 +757,50 @@ def _save_support_checkpoint(
     )
 
 
+def _save_refinement_checkpoint(
+    destination: Path,
+    model: CompactCnnEstimator,
+    optimizer: torch.optim.Optimizer,
+    config: TrainingConfig,
+    pilot_length: int,
+    support_data: PreparedSupportData,
+    stats: NormalizationStats,
+    epoch: int,
+    best_val_nmse: float,
+    device: torch.device,
+) -> None:
+    torch.save(
+        {
+            "name": "refinement",
+            "epoch": epoch,
+            "best_val_nmse": best_val_nmse,
+            "pilot_length": pilot_length,
+            "device": str(device),
+            "config": config.to_dict(),
+            "input_shape": list(support_data.pilot_data.train.input_shape),
+            "target_shape": list(support_data.pilot_data.train.target_shape),
+            "normalization": stats.to_dict(),
+            "angular_metadata": support_data.metadata.to_dict(),
+            "model_state": model.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+        },
+        destination,
+    )
+
+
 def _save_joint_checkpoint(
     destination: Path,
     row_model: SupportDnCNN,
     column_model: SupportDnCNN,
+    refinement_model: CompactCnnEstimator,
+    refinement_stats: NormalizationStats,
     config: TrainingConfig,
     pilot_length: int,
     support_data: PreparedSupportData,
     device: torch.device,
     row_epoch: int,
     column_epoch: int,
+    refinement_epoch: int,
 ) -> None:
     torch.save(
         {
@@ -563,10 +810,13 @@ def _save_joint_checkpoint(
             "angular_metadata": support_data.metadata.to_dict(),
             "row_normalization": support_data.row_stats.to_dict(),
             "column_normalization": support_data.col_stats.to_dict(),
+            "refinement_normalization": refinement_stats.to_dict(),
             "row_epoch": row_epoch,
             "column_epoch": column_epoch,
+            "refinement_epoch": refinement_epoch,
             "row_model_state": row_model.state_dict(),
             "column_model_state": column_model.state_dict(),
+            "refinement_model_state": refinement_model.state_dict(),
         },
         destination,
     )
@@ -626,8 +876,8 @@ def _build_summary_row(result: PilotRunResult) -> dict[str, Any]:
 
     return {
         "pilot_length": result.pilot_length,
-        "best_epoch": max(result.best_row_epoch, result.best_column_epoch),
-        "epochs_completed": max(len(result.row_history), len(result.column_history)),
+        "best_epoch": max(result.best_row_epoch, result.best_column_epoch, result.best_refinement_epoch),
+        "epochs_completed": max(len(result.row_history), len(result.column_history), len(result.refinement_history)),
         "cnn_val_nmse_db_mean": float(result.cnn_val.summary["nmse_db_mean"]),
         "ls_val_nmse_db_mean": float(result.ls_val.summary["nmse_db_mean"]),
         "cnn_nmse_db_mean": float(result.cnn_test.summary["nmse_db_mean"]),
