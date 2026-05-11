@@ -50,17 +50,17 @@ The architecture of an RIS-assisted communication system is shown below.
 ```
 ┌─────────────────────────────────────────────────────┐
 │                                                     │
-│   ┌──────┐    G (BS–RIS)     ┌──────┐              │
-│   │  BS  │ ──────────────▶   │ RIS  │              │
-│   │(M ant)│                  │(N el.)│              │
-│   └──────┘                   └──────┘              │
-│       │                          │  h_RU (RIS–UE)  │
+│   ┌───────┐    G (BS–RIS)     ┌───────┐             │
+│   │  BS   │ ─────────────▶   │ RIS   │             │
+│   │(M ant)│                   │(N el.)│             │
+│   └───────┘                   └───────┘             │
+│       │                          │  h_RU (RIS–UE)   │
 │       │  ~~~ (direct, disabled) ~~~                 │
 │       │                          ▼                  │
-│       │                      ┌──────┐               │
-│       └─────────────────────▶│  UE  │               │
-│                              │(1 ant)│               │
-│                              └──────┘               │
+│       │                      ┌───────┐              │
+│       └────────────────────▶│  UE   │              │
+│                              │(1 ant)│              │
+│                              └───────┘              │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -960,7 +960,7 @@ The angular dual CNN slightly underperforms the single CNN at 0 dB SNR but consi
 
 ### 7.9 Channel Reconstruction Examples: Angular Dual CNN
 
-<img src="data/runs/support_cnn_baseline/20260511-095810/pilots_16/plots/channel_examples.png" alt="Angular Dual CNN Channel Examples Q=16" width="70%">
+<img src="data/runs/support_cnn_baseline/20260511-095810/pilots_16/plots/channel_examples.png" alt="Angular Dual CNN Channel Examples Q=16" width="60%">
 
 **Figure 10: True vs. predicted channel at \(Q = 16\) (Angular Dual CNN).** Compared to the single CNN at the same pilot length, the dual CNN prediction captures finer spatial structure due to the angular decomposition followed by residual correction.
 
