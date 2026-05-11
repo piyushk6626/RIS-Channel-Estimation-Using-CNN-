@@ -5,7 +5,7 @@
 ---
 
 *Department of Electronics and Communication Engineering*
-*B.Tech / M.Tech Project Report — Academic Year 2025–2026*
+*B.Tech Project Report — Academic Year 2025–2026*
 
 ---
 
